@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-navy-950: #08111F;
+  --color-navy-900: #111E31;
+  --color-navy-800: #172740;
+  --color-navy-700: #223552;
+  --color-cyan-accent: #51D6E8;
+  --color-lime-accent: #B9F36B;
+  --color-ink-primary: #EEF5FF;
+  --color-ink-secondary: #9BB0CA;
+  --color-warn-gold: #F5B731;
+  --color-err-red: #F05252;
+}
+
+@layer base {
+  html {
+    background-color: #08111F;
+    color: #EEF5FF;
+    font-family: var(--font-sans);
+    color-scheme: dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background-color: #08111F;
+    color: #EEF5FF;
+    min-height: 100dvh;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

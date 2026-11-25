@@ -1,0 +1,1533 @@
+# PROJECT: TECH AUCTION 2026 – THE ULTIMATE TECH CHALLENGE
+
+## MASTER PROMPT FOR GOOGLE AI STUDIO
+
+Act as a senior full-stack software architect, UI/UX designer, backend engineer, database architect, real-time systems engineer, and software tester.
+
+Your task is to design, develop, and deliver a complete, fully functional, real-time multiplayer **TECH AUCTION WEB APPLICATION** from scratch.
+
+This is an application for conducting a live technology-based auction competition between multiple teams during a college technical event.
+
+The application must be professional, modern, easy to operate, responsive, reliable, secure, and capable of handling more than 16 teams and approximately 60 simultaneously connected devices.
+
+I do not want a static website, a frontend-only prototype, or a collection of screens with nonfunctional buttons.
+
+I want a complete working application with frontend, backend, database, real-time communication, room management, bidding, scoring, host controls, and final results.
+
+---
+
+# PART 1 – UNDERSTAND THE EVENT CONCEPT
+
+## 1. What is Tech Auction?
+
+Tech Auction is a competitive technical event where multiple teams participate in a live auction.
+
+The host creates an auction room and adds a collection of technology-related objects, concepts, tools, programming languages, software platforms, computer components, and other technical topics.
+
+Each team joins the room using a unique room code from its own mobile phone.
+
+The host starts an auction for an item.
+
+Teams compete against each other by placing bids. The team that places the highest valid bid before the auction timer expires becomes the winning team.
+
+After the auction ends, the host asks that team a technical question related to the auctioned item.
+
+The team physically answers the question to the host.
+
+The host listens to the answer and manually decides whether it is correct or incorrect using the Host Dashboard.
+
+The scoring system works as follows:
+
+- Correct answer: +10 points.
+- Wrong answer: -10 points.
+- The host controls the evaluation.
+- The application never automatically evaluates answers.
+
+The points and virtual coins represent the same value.
+
+After all auction questions have been completed, the application automatically calculates the leaderboard and announces the winners.
+
+## 2. Main participants
+
+There are three main interfaces:
+
+**A. Host Dashboard**
+- Used by the event organizer who creates the room.
+- Used to manage the auction.
+- Used to add questions and auction items.
+- Used to control timers.
+- Used to evaluate answers.
+- Used to manage points and results.
+
+**B. Team Dashboard**
+- Used by participating teams through mobile phones.
+- Used to join a room.
+- Used to place bids.
+- Used to monitor the auction.
+- Used to view their own points and team status.
+
+**C. Audience / Projector Dashboard**
+- Used on a separate laptop, monitor, or projector.
+- Displays the current auction.
+- Displays the highest bid.
+- Displays the remaining timer.
+- Displays the winning team.
+- Displays the live leaderboard.
+- Displays final event results.
+
+All three interfaces must be connected to the same backend and synchronized in real time.
+
+---
+
+# PART 2 – TECHNOLOGY ARCHITECTURE
+
+## 3. Build a real full-stack application
+
+Use a modern, maintainable technology stack.
+
+Preferred technologies:
+
+### Frontend
+- React.
+- TypeScript.
+- Tailwind CSS.
+- Lucide React icons.
+- Responsive component-based architecture.
+
+### Backend
+Choose an architecture that Google AI Studio can implement and deploy reliably.
+
+Preferred options:
+- Firebase Authentication.
+- Cloud Firestore.
+- Firebase Cloud Functions.
+- Firebase real-time listeners.
+- Firebase Hosting.
+
+Alternatively, use:
+- Node.js.
+- Express.js.
+- TypeScript.
+- PostgreSQL.
+- Socket.IO.
+
+Do not combine multiple backend architectures unnecessarily.
+
+Select one primary architecture and use it consistently.
+
+### Database
+
+The database must permanently store:
+- User and host accounts.
+- Rooms.
+- Room configurations.
+- Team details.
+- Auction items.
+- Questions.
+- Bid records.
+- Current auction state.
+- Team point balances.
+- Answer evaluation records.
+- Response times.
+- Leaderboard data.
+- Auction history.
+- Final results.
+
+### Architecture requirements
+
+1. Use a single authoritative backend for all important operations.
+2. Never trust the frontend to determine winning bids or award points.
+3. Use atomic transactions for competing bids and score updates.
+4. Use server timestamps for bidding and response-time calculations.
+5. Use secure role-based permissions.
+6. Isolate each room's data from other rooms.
+7. Synchronize updates in real time.
+8. Make the application recover correctly after page refreshes and temporary disconnections.
+
+Do not store sensitive information in frontend code.
+
+Do not use localStorage as the main database.
+
+Do not simulate real-time behavior with fake timers or hardcoded data.
+
+---
+
+# PART 3 – APPLICATION DESIGN AND USER EXPERIENCE
+
+## 4. Overall design
+
+Create a premium-looking technology auction website.
+
+Use a dark, modern, professional event-oriented design.
+
+Suggested visual theme:
+
+- Background: dark navy (#08111F).
+- Cards: dark blue (#111E31 and #172740).
+- Primary highlight: cyan (#51D6E8).
+- Secondary highlight: lime green (#B9F36B).
+- Main text: white (#EEF5FF).
+- Secondary text: muted blue-gray (#9BB0CA).
+- Warning: gold/yellow.
+- Error: red.
+
+Use:
+- Rounded cards.
+- Clean typography.
+- Clear spacing.
+- Subtle gradients.
+- Professional shadows.
+- Modern icons.
+- Smooth but restrained animations.
+- Large, readable numerical displays.
+- Visually distinct buttons.
+
+Do not overcrowd the interface.
+
+The design must look professional on:
+- Desktop.
+- Laptop.
+- Tablet.
+- Android mobile.
+- iPhone.
+
+## 5. User-friendly navigation
+
+Create a clear navigation system with the following options:
+
+1. Home.
+2. Create Room.
+3. Join Room.
+4. Host Dashboard.
+5. Team Dashboard.
+6. Audience Display.
+7. Leaderboard.
+8. About the Event.
+
+Use a hamburger menu on smaller screens.
+
+The Join Room and Create Room options must be easy to find.
+
+A first-time user must understand where to go without requiring technical knowledge.
+
+Use clear instructions, readable labels, helpful error messages, and confirmation messages.
+
+Never expose host-only controls to team participants.
+
+---
+
+# PART 4 – HOME PAGE
+
+## 6. Landing page
+
+Create an attractive home page with:
+
+Event title:
+
+**TECH AUCTION 2026**
+
+Tagline:
+
+**THINK. BID. CONQUER.**
+
+Subtitle:
+
+A Battle of Logic, Knowledge & Creativity.
+
+Include:
+- A professional hero section.
+- A brief explanation of how the event works.
+- Create Room button.
+- Join Room button.
+- View Rules button.
+- Attractive technology-themed visual elements.
+- A clear navigation menu.
+
+The Create Room button should lead to the room creation interface.
+
+The Join Room button should lead to the room joining interface.
+
+Do not make the home page unnecessarily complicated.
+
+---
+
+# PART 5 – HOST AUTHENTICATION AND ROOM CREATION
+
+## 7. Host authentication
+
+The host must have a secure way to access the application.
+
+Implement authentication using the selected backend.
+
+Requirements:
+- Secure host login.
+- Host session management.
+- Logout.
+- Protected Host Dashboard.
+- Only the authorized room creator or assigned host can control that room.
+
+Team participants must not be able to access host functions by changing a URL or modifying frontend code.
+
+## 8. Create Room dashboard
+
+Create a dedicated Create Room dashboard.
+
+The host should be able to create multiple independent auction rooms.
+
+Each room must have:
+
+- Room name.
+- Unique room code.
+- Optional room PIN.
+- Room creator.
+- Room status.
+- Maximum team count.
+- Starting virtual coins.
+- Auction duration.
+- Answer duration.
+- Correct-answer points.
+- Wrong-answer deduction.
+- Minimum starting bid.
+- Minimum bid increment.
+- Optional setting for deducting winning bids.
+- Room creation date and time.
+
+Default settings:
+
+| Setting | Default |
+|---|---:|
+| Starting coins | 100 |
+| Correct answer | +10 |
+| Wrong answer | -10 |
+| Auction timer | 30 seconds |
+| Answer timer | 20 seconds |
+| Maximum teams | Configurable |
+| Winning bid deduction | OFF |
+
+Allow the host to change these values before creating the room.
+
+The host must be able to:
+- Create a room.
+- Edit room settings before starting.
+- View room code.
+- Copy room code.
+- Share room code.
+- Activate/deactivate a room.
+- Start a room.
+- End a room.
+- View previously created rooms.
+- Delete a room only after appropriate confirmation.
+
+Every room must operate independently.
+
+## 9. Room status
+
+Use understandable room statuses:
+
+- Waiting for Teams.
+- Ready to Start.
+- Auction Live.
+- Answer in Progress.
+- Paused.
+- Completed.
+
+Only active rooms should accept team joining and bidding, according to their current status.
+
+---
+
+# PART 6 – CUSTOM AUCTION ITEMS AND QUESTIONS
+
+## 10. Create Room → Custom section
+
+The host must be able to create a custom auction containing any number of questions or items.
+
+Create a user-friendly form.
+
+Each custom item should contain:
+
+1. Item name.
+2. Question title.
+3. Question description.
+4. Category.
+5. Image or emoji (optional).
+6. Difficulty level (optional).
+7. Starting bid.
+8. Auction duration (optional override).
+9. Answer duration (optional override).
+
+### VERY IMPORTANT: NO CORRECT ANSWER FIELD
+
+Do not include a correct-answer input anywhere in the custom question creation form.
+
+The host will physically listen to the answer during the event.
+
+The host personally decides whether the answer is correct or incorrect.
+
+Therefore:
+
+- Do not ask for a correct answer.
+- Do not store a correct answer.
+- Do not use AI to evaluate answers.
+- Do not automatically compare answers against predefined answers.
+- Do not expose any answer key to teams or audience members.
+
+The question must be available to the host when required.
+
+The host will communicate the question verbally during the event.
+
+## 11. Custom question management
+
+The host must be able to:
+
+- Add unlimited custom questions, subject to reasonable system limits.
+- Edit a question.
+- Delete a question.
+- Duplicate a question.
+- Preview a question.
+- Search questions.
+- Filter by category.
+- Reorder questions.
+- Randomize question order.
+- Import questions using CSV.
+- Export questions using CSV.
+- Save questions to a reusable question bank.
+
+Before starting the auction, show the host:
+- Total number of questions.
+- Current question order.
+- Number of unused questions.
+- Room configuration.
+
+Do not allow the auction to start without at least one valid item.
+
+---
+
+# PART 7 – JOIN ROOM SYSTEM
+
+## 12. Join Room dashboard
+
+Create a separate Join Room page.
+
+A participant must be able to join using the room code generated by the host.
+
+The joining form must contain:
+
+- Room Code.
+- Team Name.
+- Optional Team Password or PIN, if configured.
+
+Include a large Join Room button.
+
+### Joining process
+
+1. Participant opens the website on a mobile phone.
+2. Participant selects Join Room.
+3. Participant enters the room code.
+4. Participant enters the team name.
+5. The backend verifies the room code.
+6. The backend checks whether the room is active and accepting participants.
+7. The backend checks the team capacity.
+8. The backend checks duplicate team names.
+9. If valid, the participant joins the room.
+10. The participant is redirected to the Team Dashboard.
+
+### Validation
+
+Display understandable messages for:
+- Incorrect room code.
+- Room not found.
+- Room inactive.
+- Room already completed.
+- Room full.
+- Duplicate team name.
+- Incorrect PIN.
+- Connection failure.
+
+Prevent unauthorized access.
+
+Do not allow a participant to join another room simply by modifying a URL.
+
+## 13. Team joining and team identity
+
+Every team must have:
+- Unique team ID.
+- Team name.
+- Room ID.
+- Current point balance.
+- Connection status.
+- Joined timestamp.
+- Participation status.
+
+Support at least 16 teams, with the ability to configure a higher limit.
+
+Allow the same team to reconnect to its existing team session without creating a duplicate team.
+
+If multiple phones are allowed for one team, they must share the same team balance and state. However, prevent conflicting duplicate bids from the same team.
+
+The host must be able to see all joined teams and their connection status.
+
+---
+
+# PART 8 – TEAM DASHBOARD
+
+## 14. Team Dashboard interface
+
+Create a mobile-first Team Dashboard.
+
+A participant should see only the information needed to participate.
+
+Display:
+
+- Team name.
+- Room name.
+- Room status.
+- Current auction item.
+- Current highest bid.
+- Current highest-bidding team.
+- Remaining auction time.
+- Team's own points/coins.
+- Bid input.
+- Place Bid button.
+- Connection status.
+- Recent bidding updates.
+
+Do not reveal other teams' private information.
+
+Do not expose host controls.
+
+Do not expose any answer key.
+
+Do not reveal the question before the host decides to communicate it.
+
+## 15. Mobile bidding controls
+
+The bidding interface must be simple.
+
+Provide:
+- Bid amount input.
+- Increase/decrease controls.
+- Place Bid button.
+- Clear validation messages.
+
+The participant must be able to place a bid quickly using a mobile phone.
+
+Show immediate feedback:
+
+- Bid accepted.
+- You are currently the highest bidder.
+- Another team has outbid you.
+- Your bid is too low.
+- Auction has ended.
+- You cannot outbid your own current bid.
+- Invalid bid.
+
+Disable the bid button when bidding is closed.
+
+---
+
+# PART 9 – REAL-TIME AUCTION ENGINE
+
+## 16. Live bidding system
+
+This is the most important technical feature of the entire application.
+
+Build a genuine server-authoritative real-time bidding system.
+
+Every team must be able to place bids simultaneously.
+
+All connected devices must receive the latest accepted auction state.
+
+The following must update in real time:
+
+- Current highest bid.
+- Current highest-bidding team.
+- Bid history.
+- Auction countdown.
+- Auction status.
+- Winning team announcement.
+
+Updates must appear on:
+- Host Dashboard.
+- All Team Dashboards.
+- Audience Display.
+
+Use room-specific real-time communication.
+
+Do not refresh the entire page to display new bids.
+
+## 17. Bid validation rules
+
+The backend must validate every bid.
+
+A bid is valid only when:
+
+1. The participant is authenticated or has a valid team session.
+2. The team belongs to the active room.
+3. The auction is currently open.
+4. The auction deadline has not passed.
+5. The bid is a valid positive number.
+6. The bid satisfies the starting-bid requirement.
+7. The bid is higher than the current highest bid by at least the configured increment.
+8. The team is not attempting to outbid itself.
+9. The bid request is not a duplicate.
+10. The bid is accepted by the backend.
+
+Reject invalid bids with clear messages.
+
+## 18. Simultaneous bidding and priority
+
+If two or more teams press the bid button at nearly the same time, the backend must determine the order of accepted bids.
+
+Implement:
+
+- Server-generated timestamps.
+- Unique bid IDs.
+- Monotonically increasing server-side sequence numbers per auction.
+- Atomic database transactions or equivalent concurrency control.
+- Server-side validation against the latest accepted bid.
+
+The first valid bid successfully committed by the server gets priority.
+
+If a later bid is valid and sufficiently higher, it can become the new highest bid.
+
+If two requests attempt the same bid amount, process them in server transaction order. The first accepted request is recorded; the next request must be checked against the new highest bid and rejected if it no longer meets the minimum increment.
+
+Never use the participant's phone clock to decide bid priority.
+
+Never rely only on frontend validation.
+
+Never allow two teams to simultaneously become the highest bidder.
+
+Maintain an immutable bid history containing:
+- Bid ID.
+- Team ID.
+- Team name.
+- Bid amount.
+- Server timestamp.
+- Sequence number.
+- Acceptance/rejection status.
+
+## 19. Auction countdown
+
+Use a server-authoritative countdown.
+
+When the host starts an auction:
+- Record the server start timestamp.
+- Record the server deadline timestamp.
+- Broadcast the deadline to every connected client.
+
+Each client calculates the displayed remaining time using the authoritative deadline.
+
+Do not use separate independent timers on different devices as the source of truth.
+
+When the deadline is reached:
+- Automatically close bidding on the backend.
+- Reject late bid requests.
+- Determine the highest accepted bid.
+- Identify the winning team.
+- Broadcast the auction result.
+
+Support page refresh and reconnection without resetting the timer.
+
+If the host refreshes the page, the current auction must resume from the stored state.
+
+---
+
+# PART 10 – AUCTION WINNER AND ANSWER PROCESS
+
+## 20. Winner selection
+
+After the auction timer expires:
+
+1. Close bidding.
+2. Identify the highest valid bid.
+3. Identify the winning team.
+4. Display the winning team's name.
+5. Display its final bid amount.
+6. Display the auction item.
+7. Notify all connected devices.
+
+If no valid bid was received:
+- Announce that there was no winning bid.
+- Allow the host to skip the item or restart the auction.
+
+Do not invent a winner.
+
+## 21. Host-controlled answer evaluation
+
+The answer is given physically by the winning team.
+
+The host listens to the answer and makes the decision.
+
+The host must have two clear buttons:
+
+<escape>**CORRECT ANSWER: +10**</escape>
+
+<escape>**WRONG ANSWER: -10**</escape>
+
+The host can also use the configured scoring values instead of the default values.
+
+After the auction closes:
+
+1. Show the winning team.
+2. Show the question to the host.
+3. Start the answer countdown.
+4. Allow the host to listen to the team's physical answer.
+5. Allow the host to select Correct or Wrong.
+6. Update the score.
+7. Record the result.
+8. Allow the host to continue to the next item.
+
+The default answer timer must be 20 seconds, configurable to 30 seconds or another duration.
+
+### Answer timer behavior
+
+- Start the answer timer when the host starts the answer session.
+- Synchronize the timer across connected devices.
+- Record the server start timestamp.
+- Record the server decision timestamp.
+- If the timer expires, notify the host.
+- Do not automatically declare the answer correct.
+- Give the host the option to mark the answer wrong, record another outcome, or skip according to event settings.
+
+Only the authorized host may submit the final answer result.
+
+Prevent double-clicking from awarding or deducting points twice.
+
+Use an idempotent answer evaluation operation.
+
+---
+
+# PART 11 – POINTS AND VIRTUAL COINS
+
+## 22. One unified points/coins system
+
+This is a mandatory rule.
+
+**VIRTUAL COINS AND POINTS ARE EXACTLY THE SAME VALUE.**
+
+Do not create two independent balances.
+
+Use one authoritative field in the database, such as:
+
+`balance`
+
+Display that balance as the team's Points/Coins throughout the application.
+
+Default starting balance: 100.
+
+Default scoring:
+
+| Host decision | Balance change |
+|---|---:|
+| Correct answer | +10 |
+| Wrong answer | -10 |
+
+Example:
+
+| Event | Team balance |
+|---|---:|
+| Starting balance | 100 |
+| Correct answer | 110 |
+| Wrong answer | 100 |
+| Correct answer | 110 |
+| Wrong answer | 100 |
+
+The system must update the balance immediately after host evaluation.
+
+### Important bidding distinction
+
+The bid amount is the team's offer to win the auction item.
+
+The bid is NOT automatically deducted from the team's points.
+
+Default behavior:
+- Bidding does not reduce the team's balance.
+- Winning an auction does not reduce the team's balance.
+- Correct and wrong answer decisions change the balance.
+
+If a configurable winning-bid deduction setting is provided, keep it OFF by default and apply it only when explicitly enabled by the host.
+
+Never allow a negative team balance.
+
+If a wrong-answer deduction exceeds the remaining balance, clamp the final balance at zero and record both the configured deduction and the actual amount deducted.
+
+Use an immutable score transaction history.
+
+Every score update must include:
+- Team ID.
+- Room ID.
+- Question/item ID.
+- Previous balance.
+- Score change.
+- New balance.
+- Host decision.
+- Host ID.
+- Server timestamp.
+
+---
+
+# PART 12 – RESPONSE TIME TRACKING
+
+## 23. Automatic response-time calculation
+
+Response time is an important factor in the final leaderboard.
+
+For each winning team that enters the answer stage:
+
+- Start measuring time when the answer countdown begins.
+- Stop measuring when the host records the team's answer decision.
+- Calculate the difference using server timestamps.
+- Store the result automatically.
+
+Never ask teams or the host to enter response times manually.
+
+Never trust the participant's phone clock.
+
+Store response time in milliseconds for accurate calculations.
+
+Display response time in an easy-to-read format such as seconds and milliseconds.
+
+For the final leaderboard, calculate each team's total recorded response time across its completed answer sessions.
+
+Also display the number of answer sessions completed by each team.
+
+Only actual recorded answer sessions should contribute to the total response time.
+
+Do not silently invent response times for teams that did not answer.
+
+---
+
+# PART 13 – LIVE LEADERBOARD AND RANKING
+
+## 24. Live leaderboard
+
+Create a live leaderboard that automatically updates after each host evaluation.
+
+Display:
+
+- Rank.
+- Team name.
+- Points/coins.
+- Correct answers.
+- Wrong answers.
+- Answer sessions.
+- Total response time.
+
+Update the leaderboard in real time.
+
+## 25. Ranking algorithm
+
+Use the following ranking priority:
+
+**Primary criterion:**
+Higher total points rank first.
+
+**Secondary criterion:**
+If teams have equal points, the team with the lower total recorded response time ranks first.
+
+**Third criterion:**
+If points and total response time are identical, assign the same rank.
+
+Example:
+
+| Team | Points | Total response time | Rank |
+|---|---:|---:|---:|
+| Team A | 40 | 35 seconds | 1 |
+| Team B | 40 | 48 seconds | 2 |
+| Team C | 30 | 25 seconds | 3 |
+
+This means Team A ranks above Team B because both have 40 points, but Team A has a lower total response time.
+
+Make the ranking logic consistent on the backend.
+
+Do not calculate different rankings separately in different frontend components.
+
+## 26. Final leaderboard
+
+After all questions are completed, show a professional final-results screen.
+
+Include:
+- First place.
+- Second place.
+- Third place.
+- Complete team ranking.
+- Final points.
+- Correct answers.
+- Wrong answers.
+- Total response time.
+
+Use an attractive podium design for the top three teams.
+
+Allow the host to:
+- View detailed results.
+- Export results as CSV.
+- View auction history.
+- Start a new room.
+- Return to the Host Dashboard.
+
+---
+
+# PART 14 – HOST DASHBOARD
+
+## 27. Host control center
+
+Create a dedicated Host Dashboard.
+
+The dashboard must be simple to operate during a live event.
+
+Include the following sections:
+
+1. Overview.
+2. Create Room.
+3. My Rooms.
+4. Custom Auction Items.
+5. Question Bank.
+6. Live Auction.
+7. Teams.
+8. Live Bids.
+9. Leaderboard.
+10. Auction History.
+11. Final Results.
+12. Settings.
+
+### Overview
+
+Display:
+- Active rooms.
+- Total joined teams.
+- Current room status.
+- Current auction item.
+- Highest bid.
+- Leading team.
+- Current leaderboard.
+
+### Teams
+
+Display:
+- Team name.
+- Current points.
+- Joined time.
+- Online/offline status.
+- Answer sessions.
+
+Allow the host to remove a team with confirmation when necessary.
+
+### Live Auction
+
+Provide:
+- Start Auction.
+- Pause Auction, if supported.
+- Resume Auction.
+- End Auction.
+- Current item.
+- Current highest bid.
+- Leading team.
+- Countdown.
+- Bid history.
+- Winner announcement.
+
+### Answer controls
+
+Provide:
+- Start Answer Timer.
+- Correct (+10).
+- Wrong (-10).
+- Skip/No Answer.
+- Next Question.
+
+### Manual score adjustment
+
+Allow only the host to make manual score adjustments.
+
+Require:
+- Team selection.
+- Amount.
+- Reason.
+- Confirmation.
+
+Every manual adjustment must be recorded in the audit history.
+
+Do not permit participants to modify their own scores.
+
+---
+
+# PART 15 – AUDIENCE / PROJECTOR DASHBOARD
+
+## 28. Separate audience display
+
+Create a dedicated audience display page.
+
+This page will be opened on a separate laptop or projector during the event.
+
+It must be visually attractive and readable from a distance.
+
+Use large text and large numerical displays.
+
+Show:
+
+### Before the auction
+- Event title.
+- Room name.
+- Teams joined.
+- Waiting status.
+
+### During the auction
+- Current auction item.
+- Item image or emoji.
+- Starting bid.
+- Current highest bid.
+- Highest-bidding team.
+- Large countdown timer.
+- Number of participating teams.
+
+### After the auction
+- Winning team.
+- Final bid.
+- Auction status.
+
+### During answer evaluation
+- Winning team.
+- Answer countdown or evaluation status.
+- Result announcement after the host decides.
+
+### Leaderboard
+- Live team ranking.
+- Points.
+- Response time.
+- Top three teams.
+
+### Final results
+- Winner announcement.
+- Top three podium.
+- Complete final ranking.
+
+The audience display must update automatically.
+
+It must not expose:
+- Host login information.
+- Private team credentials.
+- Correct answers.
+- Internal database information.
+- Host-only controls.
+
+Provide a full-screen mode.
+
+---
+
+# PART 16 – AUCTION HISTORY AND REPORTS
+
+## 29. Complete auction history
+
+Record every important event.
+
+Store:
+- Room name and ID.
+- Item/question.
+- Auction start time.
+- Auction end time.
+- Every accepted bid.
+- Winning team.
+- Final bid amount.
+- Answer timer start.
+- Host decision.
+- Response time.
+- Points awarded or deducted.
+- Final balance.
+- Manual adjustments.
+- Event timestamps.
+
+Create an Auction History page.
+
+Allow the host to:
+- Search history.
+- Filter by team.
+- Filter by question.
+- View each auction result.
+- Export CSV.
+
+Never modify historical records silently.
+
+---
+
+# PART 17 – SCALABILITY AND PERFORMANCE
+
+## 30. Support 60 simultaneous connected devices
+
+The expected event setup is:
+
+- At least 16 participating teams.
+- Each team uses its own mobile phone.
+- One host operates the application from a laptop.
+- One separate laptop or monitor displays the audience dashboard.
+- All devices connect to the same active room.
+
+The application must be architected for at least 60 simultaneous connected devices as the initial target.
+
+Do not hardcode a maximum of 16 teams.
+
+Allow the host to configure the maximum number of teams.
+
+### Performance requirements
+
+- Efficient real-time event broadcasting.
+- Room-specific data subscriptions.
+- Minimal unnecessary database reads.
+- Minimal unnecessary writes.
+- Efficient frontend rendering.
+- Proper database indexes.
+- Reliable bid transaction handling.
+- Server-side timer management.
+- Connection recovery.
+- Reconnection without duplicate teams.
+- No duplicate score submissions.
+- No memory leaks.
+- No excessive network traffic.
+
+### Connection recovery
+
+If a participant temporarily loses internet:
+
+1. Show a connection-lost message.
+2. Attempt reconnection.
+3. Restore the participant's existing team session.
+4. Retrieve the latest room state.
+5. Retrieve the current highest bid.
+6. Retrieve the current timer deadline.
+7. Retrieve the team's current balance.
+8. Allow participation again if the auction is still open.
+
+If the host refreshes their browser, restore the active auction from the database.
+
+The audience display must also recover automatically.
+
+Do not restart the auction timer because someone refreshed their page.
+
+### Load testing
+
+Create or use a load-testing approach that simulates at least 60 connected clients.
+
+Test:
+- Simultaneous connections.
+- Simultaneous bids.
+- Repeated bid requests.
+- Room-specific broadcasting.
+- Timer synchronization.
+- Reconnection.
+- Score updates.
+- Leaderboard updates.
+
+Report:
+- Number of simulated clients.
+- Number of successful connections.
+- Bid processing results.
+- Errors.
+- Observed latency.
+- Any limitations.
+
+Do not claim that the application has passed a 60-device test unless the test was actually performed.
+
+---
+
+# PART 18 – SECURITY AND DATA INTEGRITY
+
+## 31. Security requirements
+
+Implement secure role-based access.
+
+Roles:
+- Host.
+- Team.
+- Audience.
+
+Permissions:
+
+**Host**
+- Create rooms.
+- Edit room settings.
+- Add and edit questions.
+- Start and control auctions.
+- Evaluate answers.
+- Adjust points.
+- View full reports.
+
+**Team**
+- Join rooms.
+- Place valid bids.
+- View its own balance.
+- View public auction information.
+- View leaderboard information.
+
+**Audience**
+- View public auction information.
+- View winners.
+- View leaderboard.
+- Cannot modify anything.
+
+### Backend protection
+
+- Validate all requests on the backend.
+- Use secure authentication or session tokens.
+- Apply database access rules.
+- Prevent unauthorized score changes.
+- Prevent unauthorized bid changes.
+- Prevent room data leakage.
+- Prevent answer information leakage.
+- Prevent duplicate requests.
+- Apply reasonable rate limits.
+- Validate input data.
+- Protect host-only operations.
+- Never expose secret API keys in frontend code.
+
+Do not depend on hiding buttons as a security mechanism.
+
+The backend must independently enforce every permission.
+
+---
+
+# PART 19 – DATABASE DESIGN
+
+## 32. Suggested database entities
+
+Design a normalized or appropriately structured database.
+
+The system should include entities similar to:
+
+### Users
+- user_id
+- username
+- authentication details
+- role
+- created_at
+
+### Rooms
+- room_id
+- room_code
+- room_name
+- host_id
+- room_status
+- room_settings
+- created_at
+
+### Teams
+- team_id
+- room_id
+- team_name
+- balance
+- joined_at
+- connection_status
+
+### AuctionItems
+- item_id
+- room_id
+- item_name
+- question_title
+- question_description
+- category
+- starting_bid
+- duration
+
+### Auctions
+- auction_id
+- room_id
+- item_id
+- auction_status
+- start_timestamp
+- deadline_timestamp
+- highest_bid
+- highest_bidder_team_id
+
+### Bids
+- bid_id
+- auction_id
+- team_id
+- bid_amount
+- server_timestamp
+- sequence_number
+- status
+
+### AnswerSessions
+- answer_session_id
+- auction_id
+- winning_team_id
+- answer_start_timestamp
+- answer_decision_timestamp
+- response_time_ms
+- host_decision
+
+### ScoreTransactions
+- transaction_id
+- room_id
+- team_id
+- previous_balance
+- score_change
+- new_balance
+- reason
+- host_id
+- timestamp
+
+### AuctionHistory
+- history_id
+- room_id
+- item_id
+- winning_team_id
+- final_bid
+- result
+- timestamp
+
+### Important database rules
+
+- One authoritative balance field per team.
+- No correct-answer field in custom questions.
+- Every bid must be associated with a specific auction and team.
+- Every answer result must be recorded once.
+- Every score update must have an audit record.
+- Every room must have isolated data.
+- Use appropriate indexes and constraints.
+- Use transactions for concurrent operations.
+
+Adapt the exact schema to the selected database, but preserve these data relationships and rules.
+
+---
+
+# PART 20 – TIMER AND EVENT STATE MANAGEMENT
+
+## 33. Centralized state machine
+
+Implement a clear backend-controlled event state machine.
+
+Possible states:
+
+1. ROOM_WAITING.
+2. ROOM_READY.
+3. AUCTION_OPEN.
+4. AUCTION_CLOSED.
+5. WINNER_SELECTED.
+6. ANSWER_PENDING.
+7. ANSWER_RUNNING.
+8. ANSWER_EVALUATED.
+9. NEXT_ITEM_PENDING.
+10. ROOM_COMPLETED.
+
+Only allow valid transitions.
+
+For example:
+
+- A bid cannot be accepted when the auction is closed.
+- An answer cannot be evaluated before a winning team is selected.
+- The next item cannot start while an answer decision is pending, unless the host explicitly skips it.
+- A completed room cannot accept new bids.
+
+Make every state transition authoritative on the backend.
+
+Persist the state so the application can recover after refreshes or server restarts.
+
+---
+
+# PART 21 – USER EXPERIENCE DETAILS
+
+## 34. Make the application understandable to everyone
+
+The application will be used by college students and event organizers who may not have technical experience.
+
+Therefore:
+
+- Use simple English.
+- Use familiar words.
+- Keep navigation obvious.
+- Make the important buttons large.
+- Use clear colors for different actions.
+- Display countdowns prominently.
+- Display success and error messages.
+- Explain what users need to do at each stage.
+- Prevent accidental destructive actions with confirmation dialogs.
+- Avoid complicated configuration screens.
+- Make the mobile bidding interface extremely simple.
+
+Examples:
+
+Instead of complicated technical messages, use:
+- "Room joined successfully."
+- "Your bid has been accepted."
+- "Another team has placed a higher bid."
+- "Auction time is over."
+- "Your team has won the auction."
+- "Waiting for the host to evaluate your answer."
+- "Your points have been updated."
+
+---
+
+# PART 22 – FUNCTIONAL TESTING
+
+## 35. Mandatory test cases
+
+Before declaring the application complete, test all the following:
+
+### Room management
+1. Host registration/login.
+2. Host creates a room.
+3. Unique room code generation.
+4. Host edits room settings.
+5. Host creates multiple rooms.
+6. Two rooms operate independently.
+
+### Team joining
+7. Participant joins using a valid code.
+8. Invalid room code is rejected.
+9. Duplicate team name is rejected.
+10. Full room rejects additional teams.
+11. Participant reconnects to the existing team.
+
+### Custom questions
+12. Host creates a custom item.
+13. Host edits an item.
+14. Host deletes an item.
+15. Correct-answer field is absent.
+16. No automatic answer evaluation occurs.
+
+### Bidding
+17. Team places a valid bid.
+18. Highest bid updates live.
+19. Two teams bid simultaneously.
+20. Server determines accepted bid order.
+21. Invalid bid is rejected.
+22. Team cannot outbid itself.
+23. Duplicate bid is rejected.
+24. Late bid is rejected.
+25. Auction timer remains synchronized.
+26. Auction closes automatically.
+
+### Answer evaluation
+27. Winning team is correctly identified.
+28. Host starts answer timer.
+29. Host marks answer correct.
+30. Host marks answer wrong.
+31. Timer expiration does not automatically mark an answer correct.
+32. Double-clicking the evaluation button does not double-score.
+
+### Points and leaderboard
+33. Correct answer adds points.
+34. Wrong answer deducts points.
+35. Coins and points always remain identical.
+36. Negative balances are prevented.
+37. Live leaderboard updates.
+38. Equal scores use total response time.
+39. Equal scores and equal response times share the same rank.
+40. Final results are correct.
+
+### Reliability
+41. Host refreshes during an auction.
+42. Team refreshes during an auction.
+43. Participant disconnects and reconnects.
+44. Audience display reconnects.
+45. Multiple rooms operate independently.
+46. CSV export works.
+47. Unauthorized users cannot access host operations.
+48. At least 60 simultaneous connections are tested where the environment permits.
+
+Fix all errors discovered during testing.
+
+---
+
+# PART 23 – PROJECT DELIVERY
+
+## 36. Build the actual application
+
+Do not stop after generating the home page.
+
+Do not provide only a design.
+
+Do not create buttons that have no functionality.
+
+Build the complete application with all required pages, components, backend operations, database connections, and real-time functionality.
+
+Organize the source code cleanly.
+
+Use reusable components.
+
+Use proper TypeScript types.
+
+Provide clear error handling.
+
+Provide a README file containing:
+- Project overview.
+- Technology stack.
+- Installation instructions.
+- Environment variables required.
+- Database configuration.
+- Authentication setup.
+- Backend setup.
+- Local development instructions.
+- Deployment instructions.
+- Testing instructions.
+
+If external credentials are required, clearly identify them.
+
+Do not fabricate credentials.
+
+If an integration cannot be configured without credentials, create the correct integration structure and explain what credentials are needed. Clearly label any demo mode.
+
+## 37. Final acceptance criteria
+
+The project is complete only when:
+
+- Host can securely log in.
+- Host can create a room.
+- Host can add custom auction questions without a correct-answer field.
+- Host can share a room code.
+- Teams can join using their mobile phones.
+- Multiple teams can participate simultaneously.
+- Teams can place live bids.
+- Server correctly handles simultaneous bidding.
+- Auction timer is synchronized.
+- Highest bidder is identified correctly.
+- Host can physically evaluate the answer and select Correct or Wrong.
+- Correct answer awards +10 by default.
+- Wrong answer deducts -10 by default.
+- Coins and points are the same balance.
+- Response time is recorded automatically.
+- Leaderboard updates live.
+- Equal scores are ranked by lower total response time.
+- Audience display updates live.
+- Final results are generated correctly.
+- Auction history is stored.
+- The application handles temporary disconnections.
+- The system is architected for approximately 60 connected devices.
+- Security rules prevent unauthorized changes.
+- All important buttons and controls actually work.
+
+---
+
+# FINAL DEVELOPMENT INSTRUCTIONS
+
+Follow this development sequence:
+
+**PHASE 1 – Architecture**
+Inspect the requirements, select the backend architecture, define the database, define permissions, and design the real-time event flow.
+
+**PHASE 2 – Frontend**
+Build the landing page, navigation, host authentication, Create Room, Join Room, Host Dashboard, Team Dashboard, and Audience Display.
+
+**PHASE 3 – Backend**
+Implement room management, team joining, database operations, authentication, access control, and room isolation.
+
+**PHASE 4 – Auction Engine**
+Implement real-time bidding, atomic bid processing, server-side bid priority, countdown synchronization, winner selection, and auction state persistence.
+
+**PHASE 5 – Scoring**
+Implement host-controlled answer evaluation, unified points/coins, response-time tracking, and leaderboard ranking.
+
+**PHASE 6 – Results**
+Implement auction history, final results, podium display, and CSV export.
+
+**PHASE 7 – Testing**
+Run functional tests, concurrency tests, security checks, reconnect tests, and responsive UI checks.
+
+**PHASE 8 – Deployment**
+Prepare the application for deployment and document the required environment configuration.
+
+Do not stop after any individual phase. Continue until the complete application is implemented to the extent supported by the environment.
+
+If you encounter a technical limitation, explain it honestly and implement the strongest working alternative without silently removing a requirement.
+
+**THE MOST IMPORTANT RULE: BUILD A COMPLETE, FUNCTIONAL, REAL-TIME TECH AUCTION APPLICATION. NOT JUST A BEAUTIFUL WEBSITE.**
