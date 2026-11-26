@@ -38,8 +38,6 @@ interface CustomItemsSectionProps {
   snapshot: HostRoomSnapshot;
 }
 
-const EMOJI_PRESETS = ['💻', '🧠', '⚡', '🛰️', '🔐', '🗄️', '🤖', '🌐', '⚙️', '📡'];
-
 export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
   const { room, items } = snapshot;
 
@@ -54,6 +52,8 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
   const [saveToBank, setSaveToBank] = useState(true);
 
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [imageError, setImageError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
   const [csvText, setCsvText] = useState('');
@@ -75,6 +75,7 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
     setItemName('');
     setCategory('Tech Auction');
     setImageOrEmoji('💻');
+    setImageError(null);
     setStartingBid(room.settings.minStartingBid);
     setAuctionOverride('');
     setAnswerOverride('');
@@ -103,17 +104,22 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
     e.target.value = '';
     if (!file) return;
     setMessage(null);
+    setImageError(null);
     setUploadingImage(true);
+    setUploadProgress(10);
     try {
-      const compressed = await compressUploadedImage(file);
+      const compressed = await compressUploadedImage(file, (pct) => setUploadProgress(pct));
       setImageOrEmoji(compressed);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to upload image.';
+      setImageError(msg);
       setMessage({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Unable to upload image.',
+        text: msg,
       });
     } finally {
       setUploadingImage(false);
+      setUploadProgress(0);
     }
   };
 
@@ -168,6 +174,7 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
     setItemName(item.itemName);
     setCategory(item.category);
     setImageOrEmoji(item.imageOrEmoji);
+    setImageError(null);
     setStartingBid(item.startingBid);
     setAuctionOverride(item.auctionDurationOverride ? String(item.auctionDurationOverride) : '');
     setAnswerOverride(item.answerDurationOverride ? String(item.answerDurationOverride) : '');
@@ -334,9 +341,9 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* Item Image Upload & Live Preview (5 cols) */}
-          <div className="lg:col-span-5 space-y-3">
-            <label className="block text-xs font-semibold text-[#9BB0CA]">
-              Item Image (Photograph Upload &amp; Preview)
+          <div className="lg:col-span-5 space-y-2.5">
+            <label className="block text-xs font-semibold tracking-wider text-[#9BB0CA]">
+              ITEM IMAGE
             </label>
             <div className="rounded-2xl border border-[#223552] bg-[#08111F] p-4 space-y-3">
               <div className="aspect-video w-full rounded-xl border border-[#223552] bg-[#111E31] overflow-hidden flex items-center justify-center">
@@ -347,30 +354,45 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
                     className="h-full w-full object-contain"
                   />
                 ) : (
-                  <div className="text-center space-y-1 p-4">
-                    <span className="block text-5xl">{imageOrEmoji || '💻'}</span>
+                  <div className="text-center space-y-2 p-4">
+                    <ImagePlus className="mx-auto h-10 w-10 text-[#51D6E8]/70" />
                     <p className="text-xs text-[#9BB0CA]">
-                      Upload a photo of the item to show on stage &amp; team screens
+                      Select JPG, JPEG, PNG, or WEBP from your computer to display live
                     </p>
                   </div>
                 )}
               </div>
 
+              {uploadingImage && (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] font-mono text-[#51D6E8]">
+                    <span>Optimizing &amp; preparing image...</span>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-[#111E31] overflow-hidden">
+                    <div
+                      className="h-full bg-[#51D6E8] transition-all duration-150"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center gap-2">
-                <label className="min-h-[40px] flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-[#172740] border border-[#51D6E8]/40 px-4 text-xs font-bold text-[#51D6E8] hover:bg-[#1e3252] cursor-pointer">
+                <label className="min-h-[42px] flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-[#172740] border border-[#51D6E8]/40 px-4 text-xs font-bold text-[#51D6E8] hover:bg-[#1e3252] cursor-pointer">
                   {hasUploadedPhoto ? (
                     <RefreshCw className="h-3.5 w-3.5" />
                   ) : (
                     <ImagePlus className="h-3.5 w-3.5" />
                   )}
                   {uploadingImage
-                    ? 'Compressing...'
+                    ? `Uploading (${uploadProgress}%)`
                     : hasUploadedPhoto
                       ? 'Replace Image'
-                      : 'Upload Item Image'}
+                      : '+ Upload Image'}
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
                     onChange={(e) => void handleImageUpload(e)}
                     className="hidden"
                   />
@@ -379,31 +401,22 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
                 {hasUploadedPhoto && (
                   <button
                     type="button"
-                    onClick={() => setImageOrEmoji('💻')}
-                    className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-[#F05252]/40 bg-[#F05252]/10 px-3 text-xs font-semibold text-[#F05252] hover:bg-[#F05252]/20"
+                    onClick={() => {
+                      setImageOrEmoji('💻');
+                      setImageError(null);
+                    }}
+                    className="min-h-[42px] inline-flex items-center gap-1.5 rounded-xl border border-[#F05252]/40 bg-[#F05252]/10 px-3.5 text-xs font-semibold text-[#F05252] hover:bg-[#F05252]/20"
                   >
                     <X className="h-3.5 w-3.5" />
-                    Remove
+                    Remove Image
                   </button>
                 )}
               </div>
 
-              {!hasUploadedPhoto && (
-                <div className="pt-1 flex flex-wrap items-center gap-1">
-                  <span className="text-[11px] text-[#9BB0CA] mr-1">Fallback icon:</span>
-                  {EMOJI_PRESETS.map((em) => (
-                    <button
-                      key={em}
-                      type="button"
-                      onClick={() => setImageOrEmoji(em)}
-                      className={`rounded px-1.5 py-0.5 text-sm hover:bg-[#172740] ${
-                        imageOrEmoji === em ? 'bg-[#172740] ring-1 ring-[#51D6E8]' : ''
-                      }`}
-                    >
-                      {em}
-                    </button>
-                  ))}
-                </div>
+              {imageError && (
+                <p role="alert" className="text-xs font-medium text-[#F05252]">
+                  {imageError}
+                </p>
               )}
             </div>
           </div>
@@ -414,9 +427,9 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
               <div className="sm:col-span-2">
                 <label
                   htmlFor="item-name"
-                  className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
+                  className="block text-xs font-semibold tracking-wider text-[#9BB0CA] mb-1.5"
                 >
-                  Item Name (Item #{editingItemNumber})
+                  ITEM NAME
                 </label>
                 <input
                   id="item-name"
@@ -425,7 +438,7 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
                   maxLength={120}
                   value={itemName}
                   onChange={(e) => setItemName(e.target.value)}
-                  placeholder="e.g. RISC-V Pipeline Core"
+                  placeholder="Enter the auction item name"
                   className="w-full min-h-[46px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 text-sm font-medium text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
                 />
               </div>
@@ -620,7 +633,7 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
                           src={item.imageOrEmoji}
                           alt={item.itemName}
                           referrerPolicy="no-referrer"
-                          className="h-full w-full object-cover"
+                          className="h-full w-full object-contain"
                         />
                       ) : (
                         <span className="text-2xl">{item.imageOrEmoji || '💻'}</span>

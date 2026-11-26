@@ -369,7 +369,7 @@ export function TeamDashboard({
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
             <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
-              <p className="text-[11px] text-[#9BB0CA]">Available</p>
+              <p className="text-[11px] text-[#9BB0CA]">Available Coins</p>
               <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#51D6E8]">
                 {selfTeam.coinBalance}
               </p>
@@ -387,7 +387,7 @@ export function TeamDashboard({
               </p>
             </div>
             <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
-              <p className="text-[11px] text-[#9BB0CA]">Lost (Wrong)</p>
+              <p className="text-[11px] text-[#9BB0CA]">Deducted (Wrong)</p>
               <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#F05252]">
                 -{teamStats.coinsLostWrong}
               </p>
@@ -423,7 +423,7 @@ export function TeamDashboard({
               </p>
             </div>
             <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
-              <p className="text-[11px] text-[#9BB0CA]">Lost (Wrong)</p>
+              <p className="text-[11px] text-[#9BB0CA]">Deducted (Wrong)</p>
               <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#F05252]">
                 -{teamStats.pointsLostWrong}
               </p>

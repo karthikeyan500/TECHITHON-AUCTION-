@@ -650,7 +650,7 @@ export function RoomSettingsAndAdjustSection({
             <Sliders className="h-5 w-5 text-[#51D6E8]" />
             <div>
               <h3 className="font-display text-lg font-bold text-[#EEF5FF]">
-                COIN &amp; POINT REWARD SETTINGS
+                COIN &amp; POINT SETTINGS
               </h3>
               <p className="text-xs text-[#9BB0CA]">
                 Can be updated anytime, including during an ongoing auction. Changes apply to future

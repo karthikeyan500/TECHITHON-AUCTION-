@@ -237,7 +237,7 @@ function normalizeSettings(raw: Partial<RoomSettings> | undefined): RoomSettings
   };
 }
 
-function sanitizeImageOrEmoji(raw: string | null | undefined): string {
+export function sanitizeImageOrEmoji(raw: string | null | undefined): string {
   const trimmed = (raw || '').trim();
   if (!trimmed) return '💻';
   if (trimmed.startsWith('data:')) {
@@ -246,7 +246,7 @@ function sanitizeImageOrEmoji(raw: string | null | undefined): string {
     }
     throw new RoomActionError(
       'VALIDATION',
-      'Uploaded image must be a JPG, PNG, WebP, or GIF under 200 KB.',
+      'Uploaded image must be a JPG, PNG, or WebP under 200 KB.',
     );
   }
   if (trimmed.startsWith('https://') || trimmed.startsWith('http://') || trimmed.startsWith('/')) {

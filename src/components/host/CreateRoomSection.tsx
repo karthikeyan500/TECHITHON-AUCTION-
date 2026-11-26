@@ -94,6 +94,8 @@ export function CreateRoomSection({ onRoomCreated }: CreateRoomSectionProps) {
   const [settings, setSettings] = useState<RoomSettings>({ ...DEFAULT_ROOM_SETTINGS });
   const [draftItems, setDraftItems] = useState<DraftInitialItem[]>([]);
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [itemUploadError, setItemUploadError] = useState<Record<string, string>>({});
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +130,11 @@ export function CreateRoomSection({ onRoomCreated }: CreateRoomSectionProps) {
 
   const removeDraftItem = (localId: string) => {
     setDraftItems((prev) => prev.filter((item) => item.localId !== localId));
+    setItemUploadError((prev) => {
+      const next = { ...prev };
+      delete next[localId];
+      return next;
+    });
   };
 
   const handleDraftImageUpload = async (localId: string, e: ChangeEvent<HTMLInputElement>) => {
@@ -135,14 +142,23 @@ export function CreateRoomSection({ onRoomCreated }: CreateRoomSectionProps) {
     e.target.value = '';
     if (!file) return;
     setError(null);
+    setItemUploadError((prev) => {
+      const next = { ...prev };
+      delete next[localId];
+      return next;
+    });
     setUploadingItemId(localId);
+    setUploadProgress(10);
     try {
-      const compressed = await compressUploadedImage(file);
+      const compressed = await compressUploadedImage(file, (pct) => setUploadProgress(pct));
       updateDraftItem(localId, { imageOrEmoji: compressed });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to process image upload.');
+      const msg = err instanceof Error ? err.message : 'Unable to process image upload.';
+      setItemUploadError((prev) => ({ ...prev, [localId]: msg }));
+      setError(msg);
     } finally {
       setUploadingItemId(null);
+      setUploadProgress(0);
     }
   };
 
@@ -307,7 +323,7 @@ export function CreateRoomSection({ onRoomCreated }: CreateRoomSectionProps) {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#223552] pb-3">
             <div>
               <h3 className="font-display text-base font-bold text-[#EEF5FF]">
-                COIN &amp; POINT REWARD SETTINGS
+                COIN &amp; POINT SETTINGS
               </h3>
               <p className="text-xs text-[#9BB0CA]">
                 Virtual Coins fund auction bids; Competition Points determine leaderboard standings.
@@ -487,100 +503,128 @@ export function CreateRoomSection({ onRoomCreated }: CreateRoomSectionProps) {
               {draftItems.map((item, idx) => {
                 const hasPhoto = isRenderableImageSrc(item.imageOrEmoji);
                 const isUploading = uploadingItemId === item.localId;
+                const rowError = itemUploadError[item.localId];
                 return (
                   <div
                     key={item.localId}
-                    className="rounded-xl border border-[#223552] bg-[#111E31] p-4 flex flex-col sm:flex-row sm:items-center gap-4"
+                    className="rounded-xl border border-[#223552] bg-[#111E31] p-4 space-y-3"
                   >
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="font-mono text-xs font-bold text-[#51D6E8] w-10">
-                        #{idx + 1}
-                      </span>
-                      <div className="h-16 w-20 rounded-xl border border-[#223552] bg-[#08111F] overflow-hidden flex items-center justify-center">
-                        {hasPhoto ? (
-                          <img
-                            src={item.imageOrEmoji}
-                            alt={item.itemName || `Item #${idx + 1}`}
-                            className="h-full w-full object-cover"
+                    <div className="flex flex-col lg:flex-row lg:items-start gap-4">
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="font-mono text-xs font-bold text-[#51D6E8] w-8">
+                          #{idx + 1}
+                        </span>
+                        <div className="h-20 w-28 rounded-xl border border-[#223552] bg-[#08111F] overflow-hidden flex items-center justify-center">
+                          {hasPhoto ? (
+                            <img
+                              src={item.imageOrEmoji}
+                              alt={item.itemName || `Item #${idx + 1}`}
+                              className="h-full w-full object-contain"
+                            />
+                          ) : (
+                            <ImagePlus className="h-6 w-6 text-[#9BB0CA]/60" />
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="sm:col-span-2">
+                          <label className="block text-[11px] font-semibold tracking-wider text-[#9BB0CA] mb-1">
+                            ITEM NAME
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            maxLength={120}
+                            value={item.itemName}
+                            onChange={(e) =>
+                              updateDraftItem(item.localId, { itemName: e.target.value })
+                            }
+                            placeholder="Enter the auction item name"
+                            className="w-full min-h-[40px] rounded-xl border border-[#223552] bg-[#08111F] px-3 text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
                           />
-                        ) : (
-                          <span className="text-2xl">{item.imageOrEmoji || '💻'}</span>
-                        )}
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold tracking-wider text-[#9BB0CA] mb-1">
+                            STARTING BID (COINS)
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={item.startingBid ?? settings.minStartingBid}
+                            onChange={(e) =>
+                              updateDraftItem(item.localId, {
+                                startingBid: Math.max(1, Math.trunc(Number(e.target.value || 10))),
+                              })
+                            }
+                            className="w-full min-h-[40px] rounded-xl border border-[#223552] bg-[#08111F] px-3 font-mono text-sm text-[#51D6E8] focus:border-[#51D6E8] focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="shrink-0 space-y-1">
+                        <span className="block text-[11px] font-semibold tracking-wider text-[#9BB0CA]">
+                          ITEM IMAGE
+                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-[#51D6E8]/40 bg-[#08111F] px-3.5 text-xs font-bold text-[#51D6E8] hover:border-[#51D6E8] hover:bg-[#172740] cursor-pointer">
+                            {hasPhoto ? (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            ) : (
+                              <ImagePlus className="h-3.5 w-3.5" />
+                            )}
+                            {isUploading
+                              ? `Uploading ${uploadProgress}%`
+                              : hasPhoto
+                                ? 'Replace Image'
+                                : '+ Upload Image'}
+                            <input
+                              type="file"
+                              accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                              onChange={(e) => void handleDraftImageUpload(item.localId, e)}
+                              className="hidden"
+                            />
+                          </label>
+
+                          {hasPhoto && (
+                            <button
+                              type="button"
+                              onClick={() => updateDraftItem(item.localId, { imageOrEmoji: '💻' })}
+                              className="min-h-[40px] inline-flex items-center gap-1 rounded-xl border border-[#F05252]/40 bg-[#F05252]/10 px-3 text-xs font-semibold text-[#F05252] hover:bg-[#F05252]/20"
+                              title="Remove Image"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                              Remove Image
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => removeDraftItem(item.localId)}
+                            className="min-h-[40px] rounded-xl p-2 text-[#9BB0CA] hover:bg-[#F05252]/15 hover:text-[#F05252]"
+                            title="Delete item"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="sm:col-span-2">
-                        <label className="block text-[11px] font-semibold text-[#9BB0CA] mb-1">
-                          Item Name
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          maxLength={120}
-                          value={item.itemName}
-                          onChange={(e) =>
-                            updateDraftItem(item.localId, { itemName: e.target.value })
-                          }
-                          placeholder={`e.g. Quantum Dev Kit #${idx + 1}`}
-                          className="w-full min-h-[40px] rounded-xl border border-[#223552] bg-[#08111F] px-3 text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
+                    {isUploading && (
+                      <div className="w-full h-1.5 rounded-full bg-[#08111F] overflow-hidden">
+                        <div
+                          className="h-full bg-[#51D6E8] transition-all duration-150"
+                          style={{ width: `${uploadProgress}%` }}
                         />
                       </div>
+                    )}
 
-                      <div>
-                        <label className="block text-[11px] font-semibold text-[#9BB0CA] mb-1">
-                          Starting Bid (Coins)
-                        </label>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.startingBid ?? settings.minStartingBid}
-                          onChange={(e) =>
-                            updateDraftItem(item.localId, {
-                              startingBid: Math.max(1, Math.trunc(Number(e.target.value || 10))),
-                            })
-                          }
-                          className="w-full min-h-[40px] rounded-xl border border-[#223552] bg-[#08111F] px-3 font-mono text-sm text-[#51D6E8] focus:border-[#51D6E8] focus:outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
-                      <label className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-[#223552] bg-[#08111F] px-3 text-xs font-semibold text-[#EEF5FF] hover:border-[#51D6E8] cursor-pointer">
-                        {hasPhoto ? (
-                          <RefreshCw className="h-3.5 w-3.5 text-[#51D6E8]" />
-                        ) : (
-                          <ImagePlus className="h-3.5 w-3.5 text-[#51D6E8]" />
-                        )}
-                        {isUploading ? 'Processing...' : hasPhoto ? 'Replace' : 'Upload Photo'}
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp,image/gif"
-                          onChange={(e) => void handleDraftImageUpload(item.localId, e)}
-                          className="hidden"
-                        />
-                      </label>
-
-                      {hasPhoto && (
-                        <button
-                          type="button"
-                          onClick={() => updateDraftItem(item.localId, { imageOrEmoji: '💻' })}
-                          className="min-h-[38px] rounded-xl border border-[#223552] px-2.5 text-xs text-[#9BB0CA] hover:text-[#F05252]"
-                          title="Remove image"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => removeDraftItem(item.localId)}
-                        className="min-h-[38px] rounded-xl p-2 text-[#9BB0CA] hover:bg-[#F05252]/15 hover:text-[#F05252]"
-                        title="Remove item"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
+                    {rowError && (
+                      <p role="alert" className="text-xs font-medium text-[#F05252]">
+                        {rowError}
+                      </p>
+                    )}
                   </div>
                 );
               })}

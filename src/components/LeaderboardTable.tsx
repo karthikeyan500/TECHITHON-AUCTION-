@@ -31,8 +31,8 @@ export function LeaderboardTable({
           <tr className="border-b border-[#223552] text-xs font-semibold text-[#9BB0CA]">
             <th className="py-3 pl-4 pr-3">Rank</th>
             <th className="py-3 px-3">Team Name</th>
-            <th className="py-3 px-3 text-right text-[#B9F36B]">Competition Points</th>
-            <th className="py-3 px-3 text-right">Virtual Coins</th>
+            <th className="py-3 px-3 text-right text-[#B9F36B]">Points</th>
+            <th className="py-3 px-3 text-right">Available Coins</th>
             {!compact && (
               <>
                 <th className="py-3 px-3 text-right">Correct</th>
