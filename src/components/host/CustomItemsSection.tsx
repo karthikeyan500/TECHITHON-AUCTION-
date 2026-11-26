@@ -13,21 +13,27 @@ import {
   X,
 } from 'lucide-react';
 import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
-import { apiRequest, ApiError } from '../../lib/api.ts';
+import {
+  addCustomItem,
+  deleteCustomItem,
+  duplicateCustomItem,
+  exportItemsCsv,
+  importItemsFromCsv,
+  randomizePendingItems,
+  reorderCustomItems,
+  RoomActionError,
+  updateCustomItem,
+} from '../../lib/firestoreAuction.ts';
 import type { AuctionItem, DifficultyLevel, HostRoomSnapshot } from '../../shared/types.ts';
 import { ConfirmDialog } from '../ConfirmDialog.tsx';
 
 interface CustomItemsSectionProps {
   snapshot: HostRoomSnapshot;
-  onSnapshotUpdate: (snap: HostRoomSnapshot) => void;
 }
 
 const EMOJI_PRESETS = ['💻', '🧠', '⚡', '🛰️', '🔐', '🗄️', '🤖', '🌐', '⚙️', '📡'];
 
-export function CustomItemsSection({
-  snapshot,
-  onSnapshotUpdate,
-}: CustomItemsSectionProps) {
+export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
   const { room, items } = snapshot;
 
   // Add / Edit form state — strictly NO correct-answer field anywhere
@@ -88,6 +94,7 @@ export function CustomItemsSection({
 
   const handleSaveItem = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     setMessage(null);
     setBusy(true);
     try {
@@ -104,19 +111,12 @@ export function CustomItemsSection({
         saveToBank: editingId ? false : saveToBank,
       };
 
-      const nextSnap = editingId
-        ? await apiRequest<HostRoomSnapshot>(`/api/host/rooms/${room.id}/items/${editingId}`, {
-            method: 'PATCH',
-            authMode: 'host',
-            body: JSON.stringify(payload),
-          })
-        : await apiRequest<HostRoomSnapshot>(`/api/host/rooms/${room.id}/items`, {
-            method: 'POST',
-            authMode: 'host',
-            body: JSON.stringify(payload),
-          });
+      if (editingId) {
+        await updateCustomItem(room.id, editingId, payload);
+      } else {
+        await addCustomItem(room.id, payload);
+      }
 
-      onSnapshotUpdate(nextSnap);
       setMessage({
         type: 'success',
         text: editingId ? 'Item updated.' : 'Custom auction item added.',
@@ -125,7 +125,10 @@ export function CustomItemsSection({
     } catch (err) {
       setMessage({
         type: 'error',
-        text: err instanceof ApiError ? err.message : 'Unable to save item.',
+        text:
+          err instanceof RoomActionError || err instanceof Error
+            ? err.message
+            : 'Unable to save item.',
       });
     } finally {
       setBusy(false);
@@ -147,12 +150,15 @@ export function CustomItemsSection({
 
   const handleDuplicate = async (item: AuctionItem) => {
     setBusy(true);
+    setMessage(null);
     try {
-      const next = await apiRequest<HostRoomSnapshot>(
-        `/api/host/rooms/${room.id}/items/${item.id}/duplicate`,
-        { method: 'POST', authMode: 'host' },
-      );
-      onSnapshotUpdate(next);
+      await duplicateCustomItem(room.id, item);
+      setMessage({ type: 'success', text: `Duplicated "${item.itemName}".` });
+    } catch (err) {
+      setMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Unable to duplicate item.',
+      });
     } finally {
       setBusy(false);
     }
@@ -161,13 +167,15 @@ export function CustomItemsSection({
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setBusy(true);
+    setMessage(null);
     try {
-      const next = await apiRequest<HostRoomSnapshot>(
-        `/api/host/rooms/${room.id}/items/${deleteTarget.id}`,
-        { method: 'DELETE', authMode: 'host' },
-      );
-      onSnapshotUpdate(next);
+      await deleteCustomItem(room.id, deleteTarget.id);
       setDeleteTarget(null);
+    } catch (err) {
+      setMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Unable to delete item.',
+      });
     } finally {
       setBusy(false);
     }
@@ -178,23 +186,20 @@ export function CustomItemsSection({
     if (target < 0 || target >= items.length) return;
     const ids = items.map((i) => i.id);
     [ids[index], ids[target]] = [ids[target], ids[index]];
-    const next = await apiRequest<HostRoomSnapshot>(`/api/host/rooms/${room.id}/items/reorder`, {
-      method: 'POST',
-      authMode: 'host',
-      body: JSON.stringify({ itemIds: ids }),
-    });
-    onSnapshotUpdate(next);
+    await reorderCustomItems(room.id, ids);
   };
 
   const handleRandomize = async () => {
     setBusy(true);
+    setMessage(null);
     try {
-      const next = await apiRequest<HostRoomSnapshot>(
-        `/api/host/rooms/${room.id}/items/randomize`,
-        { method: 'POST', authMode: 'host' },
-      );
-      onSnapshotUpdate(next);
+      await randomizePendingItems(room.id, items);
       setMessage({ type: 'success', text: 'Pending question order randomized.' });
+    } catch (err) {
+      setMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Unable to randomize items.',
+      });
     } finally {
       setBusy(false);
     }
@@ -214,22 +219,14 @@ export function CustomItemsSection({
     setBusy(true);
     setMessage(null);
     try {
-      const res = await apiRequest<{ imported: number; snapshot: HostRoomSnapshot }>(
-        `/api/host/rooms/${room.id}/items/import-csv`,
-        {
-          method: 'POST',
-          authMode: 'host',
-          body: JSON.stringify({ csv: csvText }),
-        },
-      );
-      onSnapshotUpdate(res.snapshot);
+      const imported = await importItemsFromCsv(room.id, csvText, room.settings.minStartingBid);
       setShowCsvModal(false);
       setCsvText('');
-      setMessage({ type: 'success', text: `Imported ${res.imported} items from CSV.` });
+      setMessage({ type: 'success', text: `Imported ${imported} items from CSV.` });
     } catch (err) {
       setMessage({
         type: 'error',
-        text: err instanceof ApiError ? err.message : 'CSV import failed.',
+        text: err instanceof Error ? err.message : 'CSV import failed.',
       });
     } finally {
       setBusy(false);
@@ -253,15 +250,16 @@ export function CustomItemsSection({
           </p>
         </div>
         <div className="rounded-xl border border-[#223552] bg-[#111E31] p-4">
-          <p className="text-xs text-[#9BB0CA]">Timers</p>
+          <p className="text-xs text-[#9BB0CA]">Timers (Auc / Ans)</p>
           <p className="mt-1 font-mono tabular-nums text-lg font-bold text-[#EEF5FF]">
             {room.settings.auctionDurationSec}s / {room.settings.answerDurationSec}s
           </p>
         </div>
         <div className="rounded-xl border border-[#223552] bg-[#111E31] p-4">
-          <p className="text-xs text-[#9BB0CA]">Scoring</p>
-          <p className="mt-1 font-mono tabular-nums text-lg font-bold text-[#B9F36B]">
-            +{room.settings.correctPoints} / -{room.settings.wrongDeduction}
+          <p className="text-xs text-[#9BB0CA]">Rewards (Coins | Pts)</p>
+          <p className="mt-1 font-mono tabular-nums text-sm font-bold text-[#B9F36B]">
+            +{room.settings.correctCoinReward}/-{room.settings.wrongCoinPenalty}c · +
+            {room.settings.correctPointReward}/-{room.settings.wrongPointPenalty}p
           </p>
         </div>
       </div>
@@ -291,13 +289,14 @@ export function CustomItemsSection({
               <Upload className="h-3.5 w-3.5" />
               Import CSV
             </button>
-            <a
-              href={`/api/host/rooms/${room.id}/items/export-csv`}
+            <button
+              type="button"
+              onClick={() => exportItemsCsv(snapshot)}
               className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-[#223552] bg-[#172740] px-3.5 text-xs font-semibold text-[#EEF5FF] hover:bg-[#1e3252]"
             >
               <Download className="h-3.5 w-3.5" />
               Export CSV
-            </a>
+            </button>
           </div>
         </div>
 
@@ -429,7 +428,7 @@ export function CustomItemsSection({
               htmlFor="item-start-bid"
               className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
             >
-              Starting Bid
+              Starting Bid (Coins)
             </label>
             <input
               id="item-start-bid"

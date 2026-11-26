@@ -2,13 +2,16 @@ import { Search, Trophy } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { LeaderboardTable } from '../components/LeaderboardTable.tsx';
 import { PodiumDisplay } from '../components/PodiumDisplay.tsx';
-import { apiRequest, ApiError } from '../lib/api.ts';
-import { getSocket } from '../lib/socket.ts';
+import {
+  fetchPublicRoomByCode,
+  RoomActionError,
+  subscribePublicRoom,
+} from '../lib/firestoreAuction.ts';
 import type { PublicRoomSnapshot } from '../shared/types.ts';
 
 export function LeaderboardPage() {
   const [roomCode, setRoomCode] = useState('');
-  const [activeCode, setActiveCode] = useState<string | null>(null);
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<PublicRoomSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -19,11 +22,15 @@ export function LeaderboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const snap = await apiRequest<PublicRoomSnapshot>(`/api/public/rooms/${clean}`);
+      const snap = await fetchPublicRoomByCode(clean);
       setSnapshot(snap);
-      setActiveCode(clean);
+      setActiveRoomId(snap.room.id);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to load leaderboard.');
+      setError(
+        err instanceof RoomActionError || err instanceof Error
+          ? err.message
+          : 'Unable to load leaderboard.',
+      );
     } finally {
       setLoading(false);
     }
@@ -31,34 +38,30 @@ export function LeaderboardPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
+    const code = params.get('code') || params.get('room');
     if (code) {
       setRoomCode(code.toUpperCase());
-      loadRoom(code);
+      void loadRoom(code);
     }
   }, [loadRoom]);
 
   useEffect(() => {
-    if (!activeCode) return;
-    const socket = getSocket();
-    const subscribe = () => {
-      socket.emit('subscribe:public', { roomCode: activeCode });
-    };
-    const onRoomState = (next: PublicRoomSnapshot) => {
-      setSnapshot(next);
-    };
-    socket.on('connect', subscribe);
-    socket.on('room:state', onRoomState);
-    if (socket.connected) subscribe();
-    return () => {
-      socket.off('connect', subscribe);
-      socket.off('room:state', onRoomState);
-    };
-  }, [activeCode]);
+    if (!activeRoomId) return;
+    const unsub = subscribePublicRoom(
+      activeRoomId,
+      (next) => {
+        if (next) setSnapshot(next);
+      },
+      (err) => {
+        setError(err.message);
+      },
+    );
+    return () => unsub();
+  }, [activeRoomId]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    loadRoom(roomCode);
+    void loadRoom(roomCode);
   };
 
   return (
@@ -70,7 +73,7 @@ export function LeaderboardPage() {
             Live Leaderboard
           </h1>
           <p className="mt-1 text-sm text-[#9BB0CA]">
-            Ranked by highest total points/coins first, then fastest total response time.
+            Ranked by highest Competition Points first, then fastest total response time.
           </p>
         </div>
 
@@ -127,7 +130,7 @@ export function LeaderboardPage() {
         </div>
       ) : (
         <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-10 text-center text-sm text-[#9BB0CA]">
-          Enter a room code above to view live rankings and response times.
+          Enter a room code above to view live rankings, Competition Points, and Bidding Coins.
         </div>
       )}
     </main>

@@ -1,0 +1,1029 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: deny everything unless explicitly allowed
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
+    // GLOBAL VALIDATION & AUTH HELPERS
+    // ==========================================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidRoomCode(code) {
+      return code is string && code.size() >= 4 && code.size() <= 12 && code.matches('^[A-Z0-9]+$');
+    }
+
+    function isValidSlug(slug) {
+      return slug is string && slug.size() >= 1 && slug.size() <= 64 && slug.matches('^[a-z0-9_\\-]+$');
+    }
+
+    function isValidSha256(val) {
+      return val is string && val.size() == 64 && val.matches('^[a-f0-9]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isRoomHost(roomId) {
+      return isVerifiedUser()
+        && isValidId(roomId)
+        && exists(/databases/$(database)/documents/rooms/$(roomId))
+        && get(/databases/$(database)/documents/rooms/$(roomId)).data.hostId == request.auth.uid;
+    }
+
+    function isValidMachineState(state) {
+      return state is string && state in [
+        'ROOM_WAITING',
+        'ROOM_READY',
+        'AUCTION_OPEN',
+        'AUCTION_CLOSED',
+        'WINNER_SELECTED',
+        'ANSWER_PENDING',
+        'ANSWER_RUNNING',
+        'ANSWER_EVALUATED',
+        'NEXT_ITEM_PENDING',
+        'ROOM_COMPLETED'
+      ];
+    }
+
+    function isValidDifficulty(diff) {
+      return diff is string && diff in ['', 'Easy', 'Medium', 'Hard', 'Expert'];
+    }
+
+    // ==========================================
+    // ENTITY VALIDATION BLUEPRINTS
+    // ==========================================
+    function isValidHostProfile(data, userId) {
+      return data.keys().hasAll(['id', 'displayName', 'role', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'displayName', 'email', 'role', 'createdAt', 'updatedAt'])
+        && data.id == userId
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && (!('email' in data) || (data.email is string && data.email.size() <= 160))
+        && data.role == 'HOST'
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidQuestionBankItem(data, userId, bankId) {
+      return data.keys().hasAll(['id', 'hostId', 'itemName', 'questionTitle', 'questionDescription', 'category', 'imageOrEmoji', 'difficulty', 'startingBid', 'createdAt'])
+        && data.keys().hasOnly(['id', 'hostId', 'itemName', 'questionTitle', 'questionDescription', 'category', 'imageOrEmoji', 'difficulty', 'startingBid', 'auctionDurationOverride', 'answerDurationOverride', 'createdAt'])
+        && data.id == bankId
+        && data.hostId == userId
+        && data.itemName is string && data.itemName.size() >= 1 && data.itemName.size() <= 120
+        && data.questionTitle is string && data.questionTitle.size() >= 1 && data.questionTitle.size() <= 300
+        && data.questionDescription is string && data.questionDescription.size() <= 2000
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 80
+        && data.imageOrEmoji is string && data.imageOrEmoji.size() >= 1 && data.imageOrEmoji.size() <= 200
+        && isValidDifficulty(data.difficulty)
+        && data.startingBid is int && data.startingBid >= 1 && data.startingBid <= 100000
+        && (!('auctionDurationOverride' in data) || data.auctionDurationOverride == null || (data.auctionDurationOverride is int && data.auctionDurationOverride >= 5 && data.auctionDurationOverride <= 600))
+        && (!('answerDurationOverride' in data) || data.answerDurationOverride == null || (data.answerDurationOverride is int && data.answerDurationOverride >= 5 && data.answerDurationOverride <= 300))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidRoomCodeLookup(data, roomCode) {
+      return data.keys().hasAll(['roomCode', 'roomId', 'roomName', 'hostId', 'hasPin', 'isActive', 'machineState', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['roomCode', 'roomId', 'roomName', 'hostId', 'hasPin', 'isActive', 'machineState', 'createdAt', 'updatedAt'])
+        && data.roomCode == roomCode
+        && isValidId(data.roomId)
+        && data.roomName is string && data.roomName.size() >= 2 && data.roomName.size() <= 80
+        && isValidId(data.hostId)
+        && data.hasPin is bool
+        && data.isActive is bool
+        && isValidMachineState(data.machineState)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRoomSettings(s) {
+      return s is map
+        && s.keys().hasAll([
+          'maxTeams',
+          'startingCoins',
+          'startingPoints',
+          'auctionDurationSec',
+          'answerDurationSec',
+          'correctCoinReward',
+          'correctPointReward',
+          'wrongCoinPenalty',
+          'wrongPointPenalty',
+          'participationCoinReward',
+          'participationPointReward',
+          'minStartingBid',
+          'minBidIncrement',
+          'deductWinningBid',
+          'allowNegativePoints'
+        ])
+        && s.keys().hasOnly([
+          'maxTeams',
+          'startingCoins',
+          'startingPoints',
+          'auctionDurationSec',
+          'answerDurationSec',
+          'correctCoinReward',
+          'correctPointReward',
+          'wrongCoinPenalty',
+          'wrongPointPenalty',
+          'participationCoinReward',
+          'participationPointReward',
+          'minStartingBid',
+          'minBidIncrement',
+          'deductWinningBid',
+          'allowNegativePoints'
+        ])
+        && s.maxTeams is int && s.maxTeams >= 2 && s.maxTeams <= 200
+        && s.startingCoins is int && s.startingCoins >= 0 && s.startingCoins <= 1000000
+        && s.startingPoints is int && s.startingPoints >= -100000 && s.startingPoints <= 1000000
+        && s.auctionDurationSec is int && s.auctionDurationSec >= 5 && s.auctionDurationSec <= 600
+        && s.answerDurationSec is int && s.answerDurationSec >= 5 && s.answerDurationSec <= 300
+        && s.correctCoinReward is int && s.correctCoinReward >= 0 && s.correctCoinReward <= 100000
+        && s.correctPointReward is int && s.correctPointReward >= 0 && s.correctPointReward <= 100000
+        && s.wrongCoinPenalty is int && s.wrongCoinPenalty >= 0 && s.wrongCoinPenalty <= 100000
+        && s.wrongPointPenalty is int && s.wrongPointPenalty >= 0 && s.wrongPointPenalty <= 100000
+        && s.participationCoinReward is int && s.participationCoinReward >= 0 && s.participationCoinReward <= 10000
+        && s.participationPointReward is int && s.participationPointReward >= 0 && s.participationPointReward <= 10000
+        && s.minStartingBid is int && s.minStartingBid >= 1 && s.minStartingBid <= 100000
+        && s.minBidIncrement is int && s.minBidIncrement >= 1 && s.minBidIncrement <= 10000
+        && s.deductWinningBid is bool
+        && s.allowNegativePoints is bool;
+    }
+
+    function isValidRoom(data, roomId) {
+      return data.keys().hasAll([
+          'id',
+          'roomCode',
+          'roomName',
+          'hasPin',
+          'hostId',
+          'hostName',
+          'machineState',
+          'isPaused',
+          'isActive',
+          'settings',
+          'currentItemIndex',
+          'teamCount',
+          'itemCount',
+          'unusedItemCount',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'roomCode',
+          'roomName',
+          'hasPin',
+          'hostId',
+          'hostName',
+          'machineState',
+          'isPaused',
+          'pausedFromState',
+          'pausedRemainingMs',
+          'isActive',
+          'settings',
+          'currentItemIndex',
+          'currentAuctionId',
+          'currentAnswerSessionId',
+          'teamCount',
+          'itemCount',
+          'unusedItemCount',
+          'lastAnnouncement',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.id == roomId
+        && isValidRoomCode(data.roomCode)
+        && data.roomName is string && data.roomName.size() >= 2 && data.roomName.size() <= 80
+        && data.hasPin is bool
+        && isValidId(data.hostId)
+        && data.hostName is string && data.hostName.size() >= 1 && data.hostName.size() <= 80
+        && isValidMachineState(data.machineState)
+        && data.isPaused is bool
+        && (!('pausedFromState' in data) || data.pausedFromState == null || isValidMachineState(data.pausedFromState))
+        && (!('pausedRemainingMs' in data) || data.pausedRemainingMs == null || (data.pausedRemainingMs is int && data.pausedRemainingMs >= 0))
+        && data.isActive is bool
+        && isValidRoomSettings(data.settings)
+        && data.currentItemIndex is int && data.currentItemIndex >= 0 && data.currentItemIndex <= 5000
+        && (!('currentAuctionId' in data) || data.currentAuctionId == null || isValidId(data.currentAuctionId))
+        && (!('currentAnswerSessionId' in data) || data.currentAnswerSessionId == null || isValidId(data.currentAnswerSessionId))
+        && data.teamCount is int && data.teamCount >= 0 && data.teamCount <= 500
+        && data.itemCount is int && data.itemCount >= 0 && data.itemCount <= 5000
+        && data.unusedItemCount is int && data.unusedItemCount >= 0 && data.unusedItemCount <= 5000
+        && (!('lastAnnouncement' in data) || data.lastAnnouncement == null || (data.lastAnnouncement is string && data.lastAnnouncement.size() <= 300))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRoomPrivatePin(data, roomId) {
+      return data.keys().hasAll(['roomId', 'hostId', 'pinHash', 'updatedAt'])
+        && data.keys().hasOnly(['roomId', 'hostId', 'pinHash', 'updatedAt'])
+        && data.roomId == roomId
+        && isValidId(data.hostId)
+        && isValidSha256(data.pinHash)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTeam(data, roomId, teamId) {
+      return data.keys().hasAll([
+          'id',
+          'roomId',
+          'teamName',
+          'nameSlug',
+          'coinBalance',
+          'points',
+          'correctCount',
+          'wrongCount',
+          'answerSessionsCount',
+          'totalResponseTimeMs',
+          'connectionStatus',
+          'participationStatus',
+          'joinedAt',
+          'lastSeenAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'roomId',
+          'teamName',
+          'nameSlug',
+          'coinBalance',
+          'points',
+          'correctCount',
+          'wrongCount',
+          'answerSessionsCount',
+          'totalResponseTimeMs',
+          'connectionStatus',
+          'participationStatus',
+          'joinedAt',
+          'lastSeenAt'
+        ])
+        && data.id == teamId
+        && data.roomId == roomId
+        && data.teamName is string && data.teamName.size() >= 2 && data.teamName.size() <= 40
+        && isValidSlug(data.nameSlug)
+        && data.coinBalance is int && data.coinBalance >= 0 && data.coinBalance <= 10000000
+        && data.points is int && data.points >= -10000000 && data.points <= 10000000
+        && data.correctCount is int && data.correctCount >= 0
+        && data.wrongCount is int && data.wrongCount >= 0
+        && data.answerSessionsCount is int && data.answerSessionsCount >= 0
+        && data.totalResponseTimeMs is int && data.totalResponseTimeMs >= 0
+        && data.connectionStatus is string && data.connectionStatus in ['ONLINE', 'OFFLINE']
+        && data.participationStatus is string && data.participationStatus in ['ACTIVE', 'REMOVED']
+        && data.joinedAt is timestamp
+        && data.lastSeenAt is timestamp;
+    }
+
+    function isValidTeamNameLock(data, roomId, nameSlug) {
+      return data.keys().hasAll(['nameSlug', 'roomId', 'teamId', 'teamName', 'participationStatus', 'hasTeamPin', 'createdAt'])
+        && data.keys().hasOnly(['nameSlug', 'roomId', 'teamId', 'teamName', 'participationStatus', 'hasTeamPin', 'createdAt'])
+        && data.nameSlug == nameSlug
+        && data.roomId == roomId
+        && isValidId(data.teamId)
+        && data.teamName is string && data.teamName.size() >= 2 && data.teamName.size() <= 40
+        && data.participationStatus is string && data.participationStatus in ['ACTIVE', 'REMOVED']
+        && data.hasTeamPin is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTeamAuthSecret(data, roomId, teamId) {
+      return data.keys().hasAll(['teamId', 'roomId', 'joinedPinHash', 'teamPinHash', 'reconnectTokenHash', 'authVerifier', 'lastPingAt', 'createdAt'])
+        && data.keys().hasOnly(['teamId', 'roomId', 'joinedPinHash', 'teamPinHash', 'reconnectTokenHash', 'authVerifier', 'lastPingAt', 'createdAt'])
+        && data.teamId == teamId
+        && data.roomId == roomId
+        && data.joinedPinHash is string && (data.joinedPinHash == '' || isValidSha256(data.joinedPinHash))
+        && data.teamPinHash is string && (data.teamPinHash == '' || isValidSha256(data.teamPinHash))
+        && isValidSha256(data.reconnectTokenHash)
+        && isValidSha256(data.authVerifier)
+        && data.lastPingAt is timestamp
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAuctionItemPublic(data, roomId, itemId) {
+      return data.keys().hasAll(['id', 'roomId', 'sortOrder', 'itemName', 'category', 'imageOrEmoji', 'difficulty', 'startingBid', 'status', 'createdAt'])
+        && data.keys().hasOnly(['id', 'roomId', 'sortOrder', 'itemName', 'category', 'imageOrEmoji', 'difficulty', 'startingBid', 'auctionDurationOverride', 'answerDurationOverride', 'status', 'createdAt'])
+        && data.id == itemId
+        && data.roomId == roomId
+        && data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 5000
+        && data.itemName is string && data.itemName.size() >= 1 && data.itemName.size() <= 120
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 80
+        && data.imageOrEmoji is string && data.imageOrEmoji.size() >= 1 && data.imageOrEmoji.size() <= 200
+        && isValidDifficulty(data.difficulty)
+        && data.startingBid is int && data.startingBid >= 1 && data.startingBid <= 100000
+        && (!('auctionDurationOverride' in data) || data.auctionDurationOverride == null || (data.auctionDurationOverride is int && data.auctionDurationOverride >= 5 && data.auctionDurationOverride <= 600))
+        && (!('answerDurationOverride' in data) || data.answerDurationOverride == null || (data.answerDurationOverride is int && data.answerDurationOverride >= 5 && data.answerDurationOverride <= 300))
+        && data.status is string && data.status in ['PENDING', 'COMPLETED', 'SKIPPED']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidHostPrompt(data, roomId, itemId) {
+      return data.keys().hasAll(['id', 'roomId', 'hostId', 'questionTitle', 'questionDescription', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'roomId', 'hostId', 'questionTitle', 'questionDescription', 'updatedAt'])
+        && data.id == itemId
+        && data.roomId == roomId
+        && isValidId(data.hostId)
+        && data.questionTitle is string && data.questionTitle.size() >= 1 && data.questionTitle.size() <= 300
+        && data.questionDescription is string && data.questionDescription.size() <= 2000
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAuctionRound(data, roomId, auctionId) {
+      return data.keys().hasAll([
+          'id',
+          'roomId',
+          'itemId',
+          'startingBid',
+          'auctionStatus',
+          'startTimestamp',
+          'deadlineTimestamp',
+          'deadlineAt',
+          'highestBid',
+          'sequenceCounter',
+          'bidDeducted',
+          'deductedAmount',
+          'bidRefunded',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'roomId',
+          'itemId',
+          'startingBid',
+          'auctionStatus',
+          'startTimestamp',
+          'deadlineTimestamp',
+          'deadlineAt',
+          'closedTimestamp',
+          'highestBid',
+          'highestBidderTeamId',
+          'highestBidderTeamName',
+          'sequenceCounter',
+          'bidDeducted',
+          'deductedAmount',
+          'bidRefunded',
+          'updatedAt'
+        ])
+        && data.id == auctionId
+        && data.roomId == roomId
+        && isValidId(data.itemId)
+        && data.startingBid is int && data.startingBid >= 1
+        && data.auctionStatus is string && data.auctionStatus in ['OPEN', 'CLOSED', 'WINNER_SELECTED', 'NO_BIDS', 'COMPLETED', 'SKIPPED']
+        && data.startTimestamp is int && data.startTimestamp >= 0
+        && data.deadlineTimestamp is int && data.deadlineTimestamp >= 0
+        && data.deadlineAt is timestamp
+        && (!('closedTimestamp' in data) || data.closedTimestamp == null || (data.closedTimestamp is int && data.closedTimestamp >= 0))
+        && data.highestBid is int && data.highestBid >= 0
+        && (!('highestBidderTeamId' in data) || data.highestBidderTeamId == null || isValidId(data.highestBidderTeamId))
+        && (!('highestBidderTeamName' in data) || data.highestBidderTeamName == null || (data.highestBidderTeamName is string && data.highestBidderTeamName.size() <= 40))
+        && data.sequenceCounter is int && data.sequenceCounter >= 0
+        && data.bidDeducted is bool
+        && data.deductedAmount is int && data.deductedAmount >= 0
+        && data.bidRefunded is bool
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBidRecord(data, roomId, bidId) {
+      return data.keys().hasAll(['id', 'auctionId', 'roomId', 'teamId', 'teamName', 'bidAmount', 'sequenceNumber', 'status', 'serverTimestamp'])
+        && data.keys().hasOnly(['id', 'auctionId', 'roomId', 'teamId', 'teamName', 'bidAmount', 'sequenceNumber', 'status', 'serverTimestamp'])
+        && data.id == bidId
+        && isValidId(data.auctionId)
+        && data.roomId == roomId
+        && isValidId(data.teamId)
+        && data.teamName is string && data.teamName.size() >= 2 && data.teamName.size() <= 40
+        && data.bidAmount is int && data.bidAmount >= 1 && data.bidAmount <= 10000000
+        && data.sequenceNumber is int && data.sequenceNumber >= 1
+        && data.status == 'ACCEPTED'
+        && data.serverTimestamp is timestamp;
+    }
+
+    function isValidAnswerSession(data, roomId, sessionId) {
+      return data.keys().hasAll(['id', 'auctionId', 'roomId', 'itemId', 'winningTeamId', 'winningTeamName', 'hostDecision'])
+        && data.keys().hasOnly([
+          'id',
+          'auctionId',
+          'roomId',
+          'itemId',
+          'winningTeamId',
+          'winningTeamName',
+          'answerStartTimestamp',
+          'answerDeadlineTimestamp',
+          'answerDecisionTimestamp',
+          'responseTimeMs',
+          'hostDecision'
+        ])
+        && data.id == sessionId
+        && isValidId(data.auctionId)
+        && data.roomId == roomId
+        && isValidId(data.itemId)
+        && isValidId(data.winningTeamId)
+        && data.winningTeamName is string && data.winningTeamName.size() >= 2 && data.winningTeamName.size() <= 40
+        && (!('answerStartTimestamp' in data) || data.answerStartTimestamp == null || data.answerStartTimestamp is int)
+        && (!('answerDeadlineTimestamp' in data) || data.answerDeadlineTimestamp == null || data.answerDeadlineTimestamp is int)
+        && (!('answerDecisionTimestamp' in data) || data.answerDecisionTimestamp == null || data.answerDecisionTimestamp is int)
+        && (!('responseTimeMs' in data) || data.responseTimeMs == null || (data.responseTimeMs is int && data.responseTimeMs >= 0))
+        && data.hostDecision is string && data.hostDecision in ['PENDING', 'CORRECT', 'WRONG', 'SKIPPED'];
+    }
+
+    function isValidEconomyTransaction(data, roomId, txId) {
+      return data.keys().hasAll([
+          'id',
+          'roomId',
+          'teamId',
+          'teamName',
+          'currencyType',
+          'transactionType',
+          'previousBalance',
+          'configuredChange',
+          'actualChange',
+          'newBalance',
+          'reason',
+          'hostId',
+          'timestamp'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'roomId',
+          'teamId',
+          'teamName',
+          'currencyType',
+          'transactionType',
+          'previousBalance',
+          'configuredChange',
+          'actualChange',
+          'newBalance',
+          'reason',
+          'itemId',
+          'itemName',
+          'auctionId',
+          'hostId',
+          'timestamp'
+        ])
+        && data.id == txId
+        && data.roomId == roomId
+        && isValidId(data.teamId)
+        && data.teamName is string && data.teamName.size() >= 2 && data.teamName.size() <= 40
+        && data.currencyType is string && data.currencyType in ['COINS', 'POINTS']
+        && data.transactionType is string && data.transactionType in [
+          'BID_DEDUCTION',
+          'CORRECT_REWARD',
+          'WRONG_PENALTY',
+          'PARTICIPATION_REWARD',
+          'MANUAL_ADJUSTMENT',
+          'REFUND'
+        ]
+        && data.previousBalance is int
+        && data.configuredChange is int
+        && data.actualChange is int
+        && data.newBalance is int
+        && data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 300
+        && (!('itemId' in data) || data.itemId == null || isValidId(data.itemId))
+        && (!('itemName' in data) || data.itemName == null || (data.itemName is string && data.itemName.size() <= 120))
+        && (!('auctionId' in data) || data.auctionId == null || isValidId(data.auctionId))
+        && isValidId(data.hostId)
+        && data.timestamp is timestamp;
+    }
+
+    function isValidAuctionHistoryEntry(data, roomId, historyId) {
+      return data.keys().hasAll([
+          'id',
+          'roomId',
+          'roomName',
+          'itemId',
+          'itemName',
+          'questionTitle',
+          'auctionId',
+          'finalBid',
+          'winningBidDeducted',
+          'auctionStartTimestamp',
+          'hostDecision',
+          'coinsChange',
+          'pointsChange',
+          'timestamp'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'roomId',
+          'roomName',
+          'itemId',
+          'itemName',
+          'questionTitle',
+          'auctionId',
+          'winningTeamId',
+          'winningTeamName',
+          'finalBid',
+          'winningBidDeducted',
+          'auctionStartTimestamp',
+          'auctionEndTimestamp',
+          'answerStartTimestamp',
+          'hostDecision',
+          'responseTimeMs',
+          'coinsChange',
+          'pointsChange',
+          'finalCoinBalance',
+          'finalPoints',
+          'timestamp'
+        ])
+        && data.id == historyId
+        && data.roomId == roomId
+        && data.roomName is string && data.roomName.size() >= 2 && data.roomName.size() <= 80
+        && isValidId(data.itemId)
+        && data.itemName is string && data.itemName.size() >= 1 && data.itemName.size() <= 120
+        && data.questionTitle is string && data.questionTitle.size() <= 300
+        && isValidId(data.auctionId)
+        && (!('winningTeamId' in data) || data.winningTeamId == null || isValidId(data.winningTeamId))
+        && (!('winningTeamName' in data) || data.winningTeamName == null || (data.winningTeamName is string && data.winningTeamName.size() <= 40))
+        && data.finalBid is int && data.finalBid >= 0
+        && data.winningBidDeducted is int && data.winningBidDeducted >= 0
+        && data.auctionStartTimestamp is int && data.auctionStartTimestamp >= 0
+        && (!('auctionEndTimestamp' in data) || data.auctionEndTimestamp == null || data.auctionEndTimestamp is int)
+        && (!('answerStartTimestamp' in data) || data.answerStartTimestamp == null || data.answerStartTimestamp is int)
+        && data.hostDecision is string && data.hostDecision in ['PENDING', 'CORRECT', 'WRONG', 'SKIPPED', 'NO_BIDS']
+        && (!('responseTimeMs' in data) || data.responseTimeMs == null || (data.responseTimeMs is int && data.responseTimeMs >= 0))
+        && data.coinsChange is int
+        && data.pointsChange is int
+        && (!('finalCoinBalance' in data) || data.finalCoinBalance == null || data.finalCoinBalance is int)
+        && (!('finalPoints' in data) || data.finalPoints == null || data.finalPoints is int)
+        && data.timestamp is timestamp;
+    }
+
+    // ==========================================
+    // COLLECTION MATCH BLOCKS
+    // ==========================================
+    match /test/{docId} {
+      allow get: if docId == 'connection';
+      allow list, create, update, delete: if false;
+    }
+
+    match /users/{userId} {
+      allow get: if isVerifiedUser() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidHostProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidHostProfile(incoming(), userId)
+        && incoming().id == existing().id
+        && incoming().role == existing().role
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'updatedAt']);
+      allow delete: if false;
+
+      match /question_bank/{bankId} {
+        allow get: if isVerifiedUser() && isValidId(userId) && isValidId(bankId) && request.auth.uid == userId;
+        allow list: if isVerifiedUser() && request.auth.uid == userId && resource.data.hostId == request.auth.uid;
+        allow create: if isVerifiedUser()
+          && isValidId(userId)
+          && isValidId(bankId)
+          && request.auth.uid == userId
+          && isValidQuestionBankItem(incoming(), userId, bankId)
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser()
+          && isValidId(userId)
+          && isValidId(bankId)
+          && request.auth.uid == userId
+          && isValidQuestionBankItem(incoming(), userId, bankId)
+          && incoming().id == existing().id
+          && incoming().hostId == existing().hostId
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'itemName',
+            'questionTitle',
+            'questionDescription',
+            'category',
+            'imageOrEmoji',
+            'difficulty',
+            'startingBid',
+            'auctionDurationOverride',
+            'answerDurationOverride'
+          ]);
+        allow delete: if isVerifiedUser() && isValidId(userId) && isValidId(bankId) && request.auth.uid == userId;
+      }
+    }
+
+    match /room_codes/{roomCode} {
+      allow get: if isValidRoomCode(roomCode);
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidRoomCode(roomCode)
+        && isValidRoomCodeLookup(incoming(), roomCode)
+        && incoming().hostId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/rooms/$(incoming().roomId))
+        && getAfter(/databases/$(database)/documents/rooms/$(incoming().roomId)).data.hostId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/rooms/$(incoming().roomId)).data.roomCode == roomCode;
+      allow update: if isVerifiedUser()
+        && isValidRoomCode(roomCode)
+        && isValidRoomCodeLookup(incoming(), roomCode)
+        && existing().hostId == request.auth.uid
+        && incoming().hostId == existing().hostId
+        && incoming().roomId == existing().roomId
+        && incoming().roomCode == existing().roomCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['roomName', 'hasPin', 'isActive', 'machineState', 'updatedAt']);
+      allow delete: if isVerifiedUser() && isValidRoomCode(roomCode) && existing().hostId == request.auth.uid;
+    }
+
+    match /rooms/{roomId} {
+      allow get: if isValidId(roomId);
+      allow list: if isVerifiedUser() && resource.data.hostId == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(roomId)
+        && isValidRoom(incoming(), roomId)
+        && incoming().hostId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/room_codes/$(incoming().roomCode));
+      allow update: if isVerifiedUser()
+        && isValidId(roomId)
+        && isValidRoom(incoming(), roomId)
+        && existing().hostId == request.auth.uid
+        && incoming().id == existing().id
+        && incoming().roomCode == existing().roomCode
+        && incoming().hostId == existing().hostId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (existing().machineState != 'ROOM_COMPLETED' || incoming().diff(existing()).affectedKeys().hasOnly(['isActive', 'updatedAt']))
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'roomName',
+          'hasPin',
+          'hostName',
+          'machineState',
+          'isPaused',
+          'pausedFromState',
+          'pausedRemainingMs',
+          'isActive',
+          'settings',
+          'currentItemIndex',
+          'currentAuctionId',
+          'currentAnswerSessionId',
+          'teamCount',
+          'itemCount',
+          'unusedItemCount',
+          'lastAnnouncement',
+          'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(roomId) && existing().hostId == request.auth.uid;
+
+      match /private/{docId} {
+        allow get: if isRoomHost(roomId) && docId == 'pin';
+        allow list: if false;
+        allow create: if isVerifiedUser()
+          && isValidId(roomId)
+          && docId == 'pin'
+          && isValidRoomPrivatePin(incoming(), roomId)
+          && incoming().hostId == request.auth.uid
+          && incoming().updatedAt == request.time
+          && existsAfter(/databases/$(database)/documents/rooms/$(roomId))
+          && getAfter(/databases/$(database)/documents/rooms/$(roomId)).data.hostId == request.auth.uid;
+        allow update: if isRoomHost(roomId)
+          && docId == 'pin'
+          && isValidRoomPrivatePin(incoming(), roomId)
+          && incoming().roomId == existing().roomId
+          && incoming().hostId == existing().hostId
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['pinHash', 'updatedAt']);
+        allow delete: if isRoomHost(roomId) && docId == 'pin';
+      }
+
+      match /team_names/{nameSlug} {
+        allow get: if isValidId(roomId) && isValidSlug(nameSlug);
+        allow list: if false;
+        allow create: if isValidId(roomId)
+          && isValidSlug(nameSlug)
+          && isValidTeamNameLock(incoming(), roomId, nameSlug)
+          && incoming().participationStatus == 'ACTIVE'
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/rooms/$(roomId))
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.isActive == true
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.machineState != 'ROOM_COMPLETED'
+          && existsAfter(/databases/$(database)/documents/rooms/$(roomId)/teams/$(incoming().teamId))
+          && getAfter(/databases/$(database)/documents/rooms/$(roomId)/teams/$(incoming().teamId)).data.nameSlug == nameSlug;
+        allow update: if isRoomHost(roomId)
+          && isValidSlug(nameSlug)
+          && isValidTeamNameLock(incoming(), roomId, nameSlug)
+          && incoming().nameSlug == existing().nameSlug
+          && incoming().roomId == existing().roomId
+          && incoming().teamId == existing().teamId
+          && incoming().teamName == existing().teamName
+          && incoming().hasTeamPin == existing().hasTeamPin
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['participationStatus']);
+        allow delete: if isRoomHost(roomId) && isValidSlug(nameSlug);
+      }
+
+      match /team_auth/{teamId} {
+        allow get: if isRoomHost(roomId) && isValidId(teamId);
+        allow list: if false;
+        allow create: if isValidId(roomId)
+          && isValidId(teamId)
+          && isValidTeamAuthSecret(incoming(), roomId, teamId)
+          && incoming().lastPingAt == request.time
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/rooms/$(roomId))
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.isActive == true
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.machineState != 'ROOM_COMPLETED'
+          && (
+            get(/databases/$(database)/documents/rooms/$(roomId)).data.hasPin == false
+            || (
+              exists(/databases/$(database)/documents/rooms/$(roomId)/private/pin)
+              && incoming().joinedPinHash == get(/databases/$(database)/documents/rooms/$(roomId)/private/pin).data.pinHash
+            )
+          )
+          && existsAfter(/databases/$(database)/documents/rooms/$(roomId)/teams/$(teamId));
+        allow update: if isValidId(roomId)
+          && isValidId(teamId)
+          && isValidTeamAuthSecret(incoming(), roomId, teamId)
+          && incoming().teamId == existing().teamId
+          && incoming().roomId == existing().roomId
+          && incoming().joinedPinHash == existing().joinedPinHash
+          && incoming().teamPinHash == existing().teamPinHash
+          && incoming().reconnectTokenHash == existing().reconnectTokenHash
+          && incoming().createdAt == existing().createdAt
+          && incoming().lastPingAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['authVerifier', 'lastPingAt'])
+          && (
+            incoming().authVerifier == existing().reconnectTokenHash
+            || (existing().teamPinHash != '' && incoming().authVerifier == existing().teamPinHash)
+          );
+        allow delete: if isRoomHost(roomId) && isValidId(teamId);
+      }
+
+      match /teams/{teamId} {
+        allow get: if isValidId(roomId) && isValidId(teamId);
+        allow list: if isValidId(roomId) && resource.data.roomId == roomId;
+        allow create: if isValidId(roomId)
+          && isValidId(teamId)
+          && isValidTeam(incoming(), roomId, teamId)
+          && incoming().correctCount == 0
+          && incoming().wrongCount == 0
+          && incoming().answerSessionsCount == 0
+          && incoming().totalResponseTimeMs == 0
+          && incoming().connectionStatus == 'ONLINE'
+          && incoming().participationStatus == 'ACTIVE'
+          && incoming().joinedAt == request.time
+          && incoming().lastSeenAt == request.time
+          && exists(/databases/$(database)/documents/rooms/$(roomId))
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.isActive == true
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.machineState != 'ROOM_COMPLETED'
+          && incoming().coinBalance == get(/databases/$(database)/documents/rooms/$(roomId)).data.settings.startingCoins
+          && incoming().points == get(/databases/$(database)/documents/rooms/$(roomId)).data.settings.startingPoints
+          && existsAfter(/databases/$(database)/documents/rooms/$(roomId)/team_names/$(incoming().nameSlug))
+          && existsAfter(/databases/$(database)/documents/rooms/$(roomId)/team_auth/$(teamId));
+        allow update: if isValidId(roomId)
+          && isValidId(teamId)
+          && isValidTeam(incoming(), roomId, teamId)
+          && incoming().id == existing().id
+          && incoming().roomId == existing().roomId
+          && incoming().teamName == existing().teamName
+          && incoming().nameSlug == existing().nameSlug
+          && incoming().joinedAt == existing().joinedAt
+          && (
+            (
+              isRoomHost(roomId)
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'coinBalance',
+                'points',
+                'correctCount',
+                'wrongCount',
+                'answerSessionsCount',
+                'totalResponseTimeMs',
+                'connectionStatus',
+                'participationStatus',
+                'lastSeenAt'
+              ])
+            )
+            || (
+              existing().participationStatus == 'ACTIVE'
+              && incoming().diff(existing()).affectedKeys().hasOnly(['connectionStatus', 'lastSeenAt'])
+              && incoming().lastSeenAt == request.time
+              && getAfter(/databases/$(database)/documents/rooms/$(roomId)/team_auth/$(teamId)).data.lastPingAt == request.time
+            )
+          );
+        allow delete: if isRoomHost(roomId) && isValidId(teamId);
+      }
+
+      match /items/{itemId} {
+        allow get: if isValidId(roomId) && isValidId(itemId);
+        allow list: if isValidId(roomId) && resource.data.roomId == roomId;
+        allow create: if isRoomHost(roomId)
+          && isValidId(itemId)
+          && isValidAuctionItemPublic(incoming(), roomId, itemId)
+          && incoming().createdAt == request.time;
+        allow update: if isRoomHost(roomId)
+          && isValidId(itemId)
+          && isValidAuctionItemPublic(incoming(), roomId, itemId)
+          && incoming().id == existing().id
+          && incoming().roomId == existing().roomId
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'sortOrder',
+            'itemName',
+            'category',
+            'imageOrEmoji',
+            'difficulty',
+            'startingBid',
+            'auctionDurationOverride',
+            'answerDurationOverride',
+            'status'
+          ]);
+        allow delete: if isRoomHost(roomId) && isValidId(itemId);
+      }
+
+      match /host_prompts/{itemId} {
+        allow get: if isRoomHost(roomId) && isValidId(itemId);
+        allow list: if isVerifiedUser() && resource.data.hostId == request.auth.uid;
+        allow create: if isRoomHost(roomId)
+          && isValidId(itemId)
+          && isValidHostPrompt(incoming(), roomId, itemId)
+          && incoming().hostId == request.auth.uid
+          && incoming().updatedAt == request.time;
+        allow update: if isRoomHost(roomId)
+          && isValidId(itemId)
+          && isValidHostPrompt(incoming(), roomId, itemId)
+          && incoming().id == existing().id
+          && incoming().roomId == existing().roomId
+          && incoming().hostId == existing().hostId
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['questionTitle', 'questionDescription', 'updatedAt']);
+        allow delete: if isRoomHost(roomId) && isValidId(itemId);
+      }
+
+      match /auctions/{auctionId} {
+        allow get: if isValidId(roomId) && isValidId(auctionId);
+        allow list: if isValidId(roomId) && resource.data.roomId == roomId;
+        allow create: if isRoomHost(roomId)
+          && isValidId(auctionId)
+          && isValidAuctionRound(incoming(), roomId, auctionId)
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(roomId)
+          && isValidId(auctionId)
+          && isValidAuctionRound(incoming(), roomId, auctionId)
+          && incoming().id == existing().id
+          && incoming().roomId == existing().roomId
+          && incoming().itemId == existing().itemId
+          && incoming().updatedAt == request.time
+          && (
+            (
+              isRoomHost(roomId)
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'startingBid',
+                'auctionStatus',
+                'startTimestamp',
+                'deadlineTimestamp',
+                'deadlineAt',
+                'closedTimestamp',
+                'highestBid',
+                'highestBidderTeamId',
+                'highestBidderTeamName',
+                'sequenceCounter',
+                'bidDeducted',
+                'deductedAmount',
+                'bidRefunded',
+                'updatedAt'
+              ])
+            )
+            || (
+              existing().auctionStatus == 'OPEN'
+              && request.time <= existing().deadlineAt
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'highestBid',
+                'highestBidderTeamId',
+                'highestBidderTeamName',
+                'sequenceCounter',
+                'updatedAt'
+              ])
+              && incoming().sequenceCounter == existing().sequenceCounter + 1
+              && incoming().highestBidderTeamId is string
+              && isValidId(incoming().highestBidderTeamId)
+              && incoming().highestBidderTeamId != existing().highestBidderTeamId
+              && (
+                existing().highestBidderTeamId == null
+                  ? incoming().highestBid >= (
+                      existing().startingBid > get(/databases/$(database)/documents/rooms/$(roomId)).data.settings.minStartingBid
+                        ? existing().startingBid
+                        : get(/databases/$(database)/documents/rooms/$(roomId)).data.settings.minStartingBid
+                    )
+                  : incoming().highestBid >= existing().highestBid + get(/databases/$(database)/documents/rooms/$(roomId)).data.settings.minBidIncrement
+              )
+              && get(/databases/$(database)/documents/rooms/$(roomId)).data.isActive == true
+              && get(/databases/$(database)/documents/rooms/$(roomId)).data.isPaused == false
+              && get(/databases/$(database)/documents/rooms/$(roomId)).data.machineState == 'AUCTION_OPEN'
+              && get(/databases/$(database)/documents/rooms/$(roomId)).data.currentAuctionId == auctionId
+              && get(/databases/$(database)/documents/rooms/$(roomId)/teams/$(incoming().highestBidderTeamId)).data.participationStatus == 'ACTIVE'
+              && incoming().highestBid <= get(/databases/$(database)/documents/rooms/$(roomId)/teams/$(incoming().highestBidderTeamId)).data.coinBalance
+              && getAfter(/databases/$(database)/documents/rooms/$(roomId)/team_auth/$(incoming().highestBidderTeamId)).data.lastPingAt == request.time
+            )
+          );
+        allow delete: if isRoomHost(roomId) && isValidId(auctionId);
+      }
+
+      match /bids/{bidId} {
+        allow get: if isValidId(roomId) && isValidId(bidId);
+        allow list: if isValidId(roomId) && resource.data.roomId == roomId;
+        allow create: if isValidId(roomId)
+          && isValidId(bidId)
+          && isValidBidRecord(incoming(), roomId, bidId)
+          && incoming().serverTimestamp == request.time
+          && exists(/databases/$(database)/documents/rooms/$(roomId))
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.isActive == true
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.isPaused == false
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.machineState == 'AUCTION_OPEN'
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.currentAuctionId == incoming().auctionId
+          && exists(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId))
+          && get(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId)).data.auctionStatus == 'OPEN'
+          && request.time <= get(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId)).data.deadlineAt
+          && get(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId)).data.highestBidderTeamId != incoming().teamId
+          && incoming().sequenceNumber == get(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId)).data.sequenceCounter + 1
+          && incoming().bidAmount >= (
+            get(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId)).data.highestBidderTeamId != null
+              ? get(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId)).data.highestBid + get(/databases/$(database)/documents/rooms/$(roomId)).data.settings.minBidIncrement
+              : (
+                get(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId)).data.startingBid > get(/databases/$(database)/documents/rooms/$(roomId)).data.settings.minStartingBid
+                  ? get(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId)).data.startingBid
+                  : get(/databases/$(database)/documents/rooms/$(roomId)).data.settings.minStartingBid
+              )
+          )
+          && exists(/databases/$(database)/documents/rooms/$(roomId)/teams/$(incoming().teamId))
+          && get(/databases/$(database)/documents/rooms/$(roomId)/teams/$(incoming().teamId)).data.participationStatus == 'ACTIVE'
+          && get(/databases/$(database)/documents/rooms/$(roomId)/teams/$(incoming().teamId)).data.teamName == incoming().teamName
+          && incoming().bidAmount <= get(/databases/$(database)/documents/rooms/$(roomId)/teams/$(incoming().teamId)).data.coinBalance
+          && getAfter(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId)).data.highestBid == incoming().bidAmount
+          && getAfter(/databases/$(database)/documents/rooms/$(roomId)/auctions/$(incoming().auctionId)).data.highestBidderTeamId == incoming().teamId
+          && getAfter(/databases/$(database)/documents/rooms/$(roomId)/team_auth/$(incoming().teamId)).data.lastPingAt == request.time;
+        allow update: if false;
+        allow delete: if isRoomHost(roomId) && isValidId(bidId);
+      }
+
+      match /answer_sessions/{sessionId} {
+        allow get: if isValidId(roomId) && isValidId(sessionId);
+        allow list: if isValidId(roomId) && resource.data.roomId == roomId;
+        allow create: if isRoomHost(roomId)
+          && isValidId(sessionId)
+          && isValidAnswerSession(incoming(), roomId, sessionId);
+        allow update: if isRoomHost(roomId)
+          && isValidId(sessionId)
+          && isValidAnswerSession(incoming(), roomId, sessionId)
+          && incoming().id == existing().id
+          && incoming().roomId == existing().roomId
+          && incoming().auctionId == existing().auctionId
+          && incoming().itemId == existing().itemId
+          && incoming().winningTeamId == existing().winningTeamId
+          && incoming().winningTeamName == existing().winningTeamName
+          && existing().hostDecision == 'PENDING'
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'answerStartTimestamp',
+            'answerDeadlineTimestamp',
+            'answerDecisionTimestamp',
+            'responseTimeMs',
+            'hostDecision'
+          ]);
+        allow delete: if isRoomHost(roomId) && isValidId(sessionId);
+      }
+
+      match /transactions/{txId} {
+        allow get: if isValidId(roomId) && isValidId(txId);
+        allow list: if isValidId(roomId) && resource.data.roomId == roomId;
+        allow create: if isRoomHost(roomId)
+          && isValidId(txId)
+          && isValidEconomyTransaction(incoming(), roomId, txId)
+          && incoming().hostId == request.auth.uid
+          && incoming().timestamp == request.time;
+        allow update: if false;
+        allow delete: if isRoomHost(roomId) && isValidId(txId);
+      }
+
+      match /history/{historyId} {
+        allow get: if isValidId(roomId) && isValidId(historyId);
+        allow list: if isValidId(roomId) && resource.data.roomId == roomId;
+        allow create: if isRoomHost(roomId)
+          && isValidId(historyId)
+          && isValidAuctionHistoryEntry(incoming(), roomId, historyId)
+          && incoming().timestamp == request.time;
+        allow update: if false;
+        allow delete: if isRoomHost(roomId) && isValidId(historyId);
+      }
+    }
+  }
+}

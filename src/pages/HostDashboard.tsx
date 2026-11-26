@@ -1,9 +1,12 @@
+import { signOut } from 'firebase/auth';
 import {
   Activity,
   Award,
   BarChart3,
   BookMarked,
   Check,
+  CheckCircle2,
+  Coins,
   Copy,
   Download,
   ExternalLink,
@@ -16,9 +19,11 @@ import {
   Power,
   Settings,
   Share2,
+  Sliders,
   Trash2,
   Trophy,
   Users,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
@@ -31,9 +36,24 @@ import {
 import { LiveAuctionSection } from '../components/host/LiveAuctionSection.tsx';
 import { HostAuthView } from '../components/HostAuthView.tsx';
 import { LeaderboardTable } from '../components/LeaderboardTable.tsx';
+import type { AppRoute } from '../components/Navbar.tsx';
 import { PodiumDisplay } from '../components/PodiumDisplay.tsx';
-import { apiRequest, ApiError, getHostToken, setHostToken } from '../lib/api.ts';
-import { getSocket } from '../lib/socket.ts';
+import { auth } from '../lib/firebase.ts';
+import {
+  addItemsFromQuestionBank,
+  completeRoom,
+  deleteQuestionBankItem,
+  deleteRoom,
+  exportResultsCsv,
+  listHostRooms,
+  listQuestionBank,
+  markRoomReady,
+  removeTeamFromRoom,
+  RoomActionError,
+  subscribeHostRoom,
+  toggleRoomActive,
+} from '../lib/firestoreAuction.ts';
+import { buildRoomJoinLink, resolveShareBaseUrl } from '../lib/shareUrl.ts';
 import {
   formatResponseTime,
   type HostRoomSnapshot,
@@ -59,40 +79,50 @@ export type HostSection =
 
 interface HostDashboardProps {
   hostUser: HostUser | null;
-  initialSection?: HostSection;
-  onAuthenticated: (host: HostUser, token: string) => void;
+  currentRoute: AppRoute;
+  onNavigate: (route: AppRoute, search?: string) => void;
+  onAuthenticated: (host: HostUser) => void;
   onLoggedOut: () => void;
   onOpenAudience: (roomCode: string) => void;
 }
 
 const HOST_NAV_ITEMS: Array<{ id: HostSection; label: string; icon: typeof LayoutDashboard }> = [
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'overview', label: 'Room Overview', icon: LayoutDashboard },
   { id: 'create-room', label: 'Create Room', icon: Plus },
   { id: 'my-rooms', label: 'My Rooms', icon: Layers },
-  { id: 'items', label: 'Custom Items', icon: BookMarked },
+  { id: 'items', label: 'Auction Items', icon: BookMarked },
   { id: 'question-bank', label: 'Question Bank', icon: BookMarked },
-  { id: 'live-auction', label: 'Live Auction', icon: Gavel },
-  { id: 'teams', label: 'Teams', icon: Users },
+  { id: 'live-auction', label: 'Auction Controls', icon: Gavel },
+  { id: 'teams', label: 'Team Management', icon: Users },
   { id: 'live-bids', label: 'Live Bids', icon: Activity },
-  { id: 'leaderboard', label: 'Leaderboard', icon: BarChart3 },
+  { id: 'leaderboard', label: 'Live Leaderboard', icon: BarChart3 },
   { id: 'history', label: 'Auction History', icon: History },
   { id: 'results', label: 'Final Results', icon: Trophy },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'settings', label: 'Room Settings', icon: Settings },
 ];
 
 export function HostDashboard({
   hostUser,
-  initialSection = 'overview',
+  currentRoute,
+  onNavigate,
   onAuthenticated,
   onLoggedOut,
   onOpenAudience,
 }: HostDashboardProps) {
-  const [section, setSection] = useState<HostSection>(initialSection);
+  const [section, setSection] = useState<HostSection>(() =>
+    currentRoute === '/create-room' ? 'create-room' : 'overview',
+  );
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<HostRoomSnapshot | null>(null);
   const [questionBank, setQuestionBank] = useState<QuestionBankItem[]>([]);
   const [selectedBankIds, setSelectedBankIds] = useState<string[]>([]);
+  const [shareOrigin, setShareOrigin] = useState<string>('');
+  const [createdBanner, setCreatedBanner] = useState<{
+    roomName: string;
+    roomCode: string;
+  } | null>(null);
+  const [adjustTargetTeamId, setAdjustTargetTeamId] = useState<string | null>(null);
 
   const [copiedNotice, setCopiedNotice] = useState<string | null>(null);
   const [deleteRoomTarget, setDeleteRoomTarget] = useState<RoomSummary | null>(null);
@@ -102,95 +132,66 @@ export function HostDashboard({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setSection(initialSection);
-  }, [initialSection]);
+    if (currentRoute === '/create-room') {
+      setSection('create-room');
+    } else if (currentRoute === '/host' && section === 'create-room') {
+      setSection('overview');
+    }
+  }, [currentRoute]);
+
+  useEffect(() => {
+    resolveShareBaseUrl()
+      .then((origin) => setShareOrigin(origin))
+      .catch(() => {});
+  }, []);
 
   const fetchRoomsAndBank = useCallback(async () => {
     if (!hostUser) return;
     try {
-      const [roomsRes, bankRes] = await Promise.all([
-        apiRequest<{ rooms: RoomSummary[] }>('/api/host/rooms', { authMode: 'host' }),
-        apiRequest<{ items: QuestionBankItem[] }>('/api/host/question-bank', {
-          authMode: 'host',
-        }),
+      const [roomList, bankList] = await Promise.all([
+        listHostRooms(hostUser.id),
+        listQuestionBank(hostUser.id),
       ]);
-      setRooms(roomsRes.rooms);
-      setQuestionBank(bankRes.items);
-
+      setRooms(roomList);
+      setQuestionBank(bankList);
       setSelectedRoomId((prev) => {
-        if (prev && roomsRes.rooms.some((r) => r.id === prev)) return prev;
-        return roomsRes.rooms[0]?.id || null;
+        if (prev && roomList.some((r) => r.id === prev)) return prev;
+        return roomList[0]?.id || null;
       });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to load host workspace.');
+      setError(
+        err instanceof RoomActionError || err instanceof Error
+          ? err.message
+          : 'Unable to load host workspace.',
+      );
     }
   }, [hostUser]);
 
   useEffect(() => {
-    fetchRoomsAndBank();
+    void fetchRoomsAndBank();
   }, [fetchRoomsAndBank]);
 
-  const loadRoomSnapshot = useCallback(
-    async (roomId: string) => {
-      if (!hostUser) return;
-      try {
-        const snap = await apiRequest<HostRoomSnapshot>(`/api/host/rooms/${roomId}`, {
-          authMode: 'host',
-        });
-        setSnapshot(snap);
-      } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Failed to load room details.');
-      }
-    },
-    [hostUser],
-  );
-
+  // Real-time Firestore room subscription for active selected room
   useEffect(() => {
-    if (selectedRoomId) {
-      loadRoomSnapshot(selectedRoomId);
-    } else {
+    if (!hostUser || !selectedRoomId) {
       setSnapshot(null);
+      return;
     }
-  }, [selectedRoomId, loadRoomSnapshot]);
-
-  // Real-time Host Socket.IO subscription & automatic recovery
-  useEffect(() => {
-    if (!hostUser || !selectedRoomId) return;
-    const socket = getSocket();
-
-    const subscribe = () => {
-      socket.emit('subscribe:host', {
-        roomId: selectedRoomId,
-        token: getHostToken() || undefined,
-      });
-    };
-
-    const onHostState = (next: HostRoomSnapshot) => {
-      if (next.room.id === selectedRoomId) {
-        setSnapshot(next);
-        setRooms((prev) => prev.map((r) => (r.id === next.room.id ? next.room : r)));
-      }
-    };
-
-    const onConnect = () => {
-      subscribe();
-      loadRoomSnapshot(selectedRoomId);
-    };
-
-    socket.on('connect', onConnect);
-    socket.on('host:state', onHostState);
-
-    if (socket.connected) {
-      subscribe();
-    } else {
-      socket.connect();
-    }
-
-    return () => {
-      socket.off('connect', onConnect);
-      socket.off('host:state', onHostState);
-    };
-  }, [hostUser, selectedRoomId, loadRoomSnapshot]);
+    const unsub = subscribeHostRoom(
+      selectedRoomId,
+      hostUser.id,
+      (nextSnap) => {
+        setSnapshot(nextSnap);
+        if (nextSnap) {
+          setRooms((prev) => prev.map((r) => (r.id === nextSnap.room.id ? nextSnap.room : r)));
+        }
+      },
+      (err) => {
+        setError(err.message);
+      },
+    );
+    return () => unsub();
+  }, [hostUser, selectedRoomId]);
 
   if (!hostUser) {
     return (
@@ -205,7 +206,7 @@ export function HostDashboard({
     try {
       await navigator.clipboard.writeText(text);
       setCopiedNotice(`${label} copied`);
-      setTimeout(() => setCopiedNotice(null), 2000);
+      setTimeout(() => setCopiedNotice(null), 2500);
     } catch {
       setCopiedNotice('Copy unavailable');
     }
@@ -213,51 +214,48 @@ export function HostDashboard({
 
   const handleLogout = async () => {
     try {
-      await apiRequest('/api/auth/logout', { method: 'POST', authMode: 'host' });
+      await signOut(auth);
     } catch {
       // ignore
     }
-    setHostToken(null);
     onLoggedOut();
   };
 
   const handleRoomCreated = (nextSnap: HostRoomSnapshot) => {
-    setRooms((prev) => [nextSnap.room, ...prev]);
+    setError(null);
+    setRooms((prev) => [nextSnap.room, ...prev.filter((r) => r.id !== nextSnap.room.id)]);
     setSelectedRoomId(nextSnap.room.id);
     setSnapshot(nextSnap);
-    setSection('items');
+    setCreatedBanner({
+      roomName: nextSnap.room.roomName,
+      roomCode: nextSnap.room.roomCode,
+    });
+    setSection('overview');
+    if (currentRoute !== '/host') {
+      onNavigate('/host');
+    }
   };
 
-  const handleSnapshotUpdate = (next: HostRoomSnapshot) => {
-    setSnapshot(next);
-    setRooms((prev) => prev.map((r) => (r.id === next.room.id ? next.room : r)));
-    fetchRoomsAndBank();
-  };
-
-  const handleToggleActive = async (roomId: string) => {
+  const handleToggleActive = async (room: RoomSummary) => {
     setBusy(true);
+    setError(null);
     try {
-      const next = await apiRequest<HostRoomSnapshot>(`/api/host/rooms/${roomId}/toggle-active`, {
-        method: 'POST',
-        authMode: 'host',
-      });
-      handleSnapshotUpdate(next);
+      await toggleRoomActive(room.id, room.roomCode, room.isActive);
+      await fetchRoomsAndBank();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update room status.');
     } finally {
       setBusy(false);
     }
   };
 
-  const handleMarkReady = async (roomId: string) => {
+  const handleMarkReady = async (room: RoomSummary) => {
     setError(null);
     setBusy(true);
     try {
-      const next = await apiRequest<HostRoomSnapshot>(`/api/host/rooms/${roomId}/ready`, {
-        method: 'POST',
-        authMode: 'host',
-      });
-      handleSnapshotUpdate(next);
+      await markRoomReady(room.id, room.roomCode);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to mark room ready.');
+      setError(err instanceof Error ? err.message : 'Unable to mark room ready.');
     } finally {
       setBusy(false);
     }
@@ -266,17 +264,17 @@ export function HostDashboard({
   const handleDeleteRoom = async () => {
     if (!deleteRoomTarget) return;
     setBusy(true);
+    setError(null);
     try {
-      await apiRequest(`/api/host/rooms/${deleteRoomTarget.id}`, {
-        method: 'DELETE',
-        authMode: 'host',
-      });
+      await deleteRoom(deleteRoomTarget.id, deleteRoomTarget.roomCode);
       const remaining = rooms.filter((r) => r.id !== deleteRoomTarget.id);
       setRooms(remaining);
       if (selectedRoomId === deleteRoomTarget.id) {
         setSelectedRoomId(remaining[0]?.id || null);
       }
       setDeleteRoomTarget(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to delete room.');
     } finally {
       setBusy(false);
     }
@@ -285,14 +283,13 @@ export function HostDashboard({
   const handleCompleteRoom = async () => {
     if (!snapshot) return;
     setBusy(true);
+    setError(null);
     try {
-      const next = await apiRequest<HostRoomSnapshot>(
-        `/api/host/rooms/${snapshot.room.id}/complete`,
-        { method: 'POST', authMode: 'host' },
-      );
-      handleSnapshotUpdate(next);
+      await completeRoom(snapshot.room.id, snapshot.room.roomCode);
       setCompleteRoomConfirm(false);
       setSection('results');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to complete room.');
     } finally {
       setBusy(false);
     }
@@ -301,13 +298,12 @@ export function HostDashboard({
   const handleRemoveTeam = async () => {
     if (!snapshot || !removeTeamTarget) return;
     setBusy(true);
+    setError(null);
     try {
-      const next = await apiRequest<HostRoomSnapshot>(
-        `/api/host/rooms/${snapshot.room.id}/teams/${removeTeamTarget.id}`,
-        { method: 'DELETE', authMode: 'host' },
-      );
-      handleSnapshotUpdate(next);
+      await removeTeamFromRoom(snapshot.room.id, removeTeamTarget);
       setRemoveTeamTarget(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to remove team.');
     } finally {
       setBusy(false);
     }
@@ -316,34 +312,37 @@ export function HostDashboard({
   const handleAddFromBank = async () => {
     if (!snapshot || selectedBankIds.length === 0) return;
     setBusy(true);
+    setError(null);
     try {
-      const next = await apiRequest<HostRoomSnapshot>(
-        `/api/host/rooms/${snapshot.room.id}/items/from-bank`,
-        {
-          method: 'POST',
-          authMode: 'host',
-          body: JSON.stringify({ bankIds: selectedBankIds }),
-        },
-      );
-      handleSnapshotUpdate(next);
+      const chosen = questionBank.filter((b) => selectedBankIds.includes(b.id));
+      await addItemsFromQuestionBank(snapshot.room.id, chosen);
       setSelectedBankIds([]);
       setSection('items');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to add items from bank.');
     } finally {
       setBusy(false);
     }
   };
 
   const handleDeleteBankItem = async (bankId: string) => {
-    await apiRequest(`/api/host/question-bank/${bankId}`, {
-      method: 'DELETE',
-      authMode: 'host',
-    });
-    setQuestionBank((prev) => prev.filter((b) => b.id !== bankId));
+    try {
+      await deleteQuestionBankItem(hostUser.id, bankId);
+      setQuestionBank((prev) => prev.filter((b) => b.id !== bankId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to delete question bank item.');
+    }
   };
 
   const joinShareUrl = snapshot
-    ? `${window.location.origin}/join?code=${snapshot.room.roomCode}`
+    ? buildRoomJoinLink(shareOrigin || window.location.origin, snapshot.room.roomCode)
     : '';
+
+  const bannerShareUrl = createdBanner
+    ? buildRoomJoinLink(shareOrigin || window.location.origin, createdBanner.roomCode)
+    : '';
+
+  const usedItemsCount = snapshot ? snapshot.items.filter((i) => i.status !== 'PENDING').length : 0;
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8">
@@ -379,7 +378,13 @@ export function HostDashboard({
               <select
                 id="active-room-select"
                 value={selectedRoomId || ''}
-                onChange={(e) => setSelectedRoomId(e.target.value)}
+                onChange={(e) => {
+                  setSelectedRoomId(e.target.value);
+                  setCreatedBanner(null);
+                  if (section === 'create-room' || section === 'my-rooms') {
+                    setSection('overview');
+                  }
+                }}
                 className="w-full min-h-[40px] rounded-xl border border-[#223552] bg-[#08111F] px-3 text-xs font-semibold text-[#51D6E8]"
               >
                 {rooms.map((r) => (
@@ -399,7 +404,14 @@ export function HostDashboard({
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setSection(item.id)}
+                  onClick={() => {
+                    setSection(item.id);
+                    if (item.id === 'create-room' && currentRoute !== '/create-room') {
+                      onNavigate('/create-room');
+                    } else if (item.id !== 'create-room' && currentRoute === '/create-room') {
+                      onNavigate('/host');
+                    }
+                  }}
                   className={`min-h-[40px] flex items-center gap-2.5 rounded-xl px-3 text-xs font-semibold transition-colors text-left whitespace-nowrap ${
                     active
                       ? 'bg-[#172740] text-[#51D6E8]'
@@ -416,12 +428,62 @@ export function HostDashboard({
 
         {/* Main Workspace Content */}
         <section className="lg:col-span-9 space-y-6 min-w-0">
+          {/* Room Creation Success Banner */}
+          {createdBanner && section !== 'create-room' && (
+            <div
+              role="status"
+              className="rounded-2xl border border-[#B9F36B]/50 bg-[#172740] px-5 py-4 flex flex-wrap items-center justify-between gap-4"
+            >
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="h-5 w-5 text-[#B9F36B] mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-display text-sm font-bold text-[#B9F36B]">
+                    Room &quot;{createdBanner.roomName}&quot; Created &amp; Active
+                  </p>
+                  <p className="text-xs text-[#9BB0CA] mt-0.5">
+                    Share code{' '}
+                    <span className="font-mono font-bold text-[#EEF5FF]">
+                      {createdBanner.roomCode}
+                    </span>{' '}
+                    or the public join link below so teams on any device can join.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => copyText(createdBanner.roomCode, 'Room code')}
+                  className="min-h-[36px] inline-flex items-center gap-1.5 rounded-xl border border-[#223552] bg-[#08111F] px-3 text-xs font-semibold text-[#EEF5FF]"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy Code
+                </button>
+                <button
+                  type="button"
+                  onClick={() => copyText(bannerShareUrl, 'Join link')}
+                  className="min-h-[36px] inline-flex items-center gap-1.5 rounded-xl bg-[#B9F36B] px-3 text-xs font-bold text-[#08111F]"
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                  Copy Join Link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreatedBanner(null)}
+                  className="rounded-lg p-1.5 text-[#9BB0CA] hover:text-[#EEF5FF]"
+                  aria-label="Dismiss notification"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Room Quick Share Header when a room is selected */}
           {snapshot && section !== 'create-room' && section !== 'my-rooms' && (
             <div className="rounded-2xl border border-[#223552] bg-[#111E31] px-5 py-4 flex flex-wrap items-center justify-between gap-4">
               <div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-[#9BB0CA]">
-                  <span className="font-mono font-bold text-[#51D6E8] text-sm">
+                  <span className="font-mono font-bold text-[#51D6E8] text-base tracking-wider">
                     {snapshot.room.roomCode}
                   </span>
                   <span aria-hidden="true">·</span>
@@ -488,7 +550,10 @@ export function HostDashboard({
                 </h2>
                 <button
                   type="button"
-                  onClick={() => setSection('create-room')}
+                  onClick={() => {
+                    setSection('create-room');
+                    onNavigate('/create-room');
+                  }}
                   className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-[#51D6E8] px-4 text-xs font-bold text-[#08111F]"
                 >
                   <Plus className="h-4 w-4" />
@@ -519,8 +584,8 @@ export function HostDashboard({
                           {r.roomName}
                         </p>
                         <p className="text-xs text-[#9BB0CA]">
-                          {r.teamCount}/{r.settings.maxTeams} teams · {r.itemCount} items · Created{' '}
-                          {new Date(r.createdAt).toLocaleDateString()}
+                          {r.teamCount}/{r.settings.maxTeams} teams · {r.itemCount} items · Start{' '}
+                          {r.settings.startingCoins}c / {r.settings.startingPoints}p
                         </p>
                       </div>
 
@@ -529,16 +594,17 @@ export function HostDashboard({
                           type="button"
                           onClick={() => {
                             setSelectedRoomId(r.id);
-                            setSection('live-auction');
+                            setCreatedBanner(null);
+                            setSection('overview');
                           }}
                           className="min-h-[38px] rounded-xl bg-[#172740] border border-[#223552] px-3.5 text-xs font-semibold text-[#EEF5FF] hover:border-[#51D6E8]"
                         >
-                          Open Console
+                          Open Control Dashboard
                         </button>
                         <button
                           type="button"
                           disabled={busy}
-                          onClick={() => handleToggleActive(r.id)}
+                          onClick={() => handleToggleActive(r)}
                           className="min-h-[38px] inline-flex items-center gap-1 rounded-xl border border-[#223552] px-3 text-xs font-semibold text-[#9BB0CA] hover:text-[#EEF5FF]"
                         >
                           <Power className="h-3.5 w-3.5" />
@@ -613,7 +679,7 @@ export function HostDashboard({
                             </p>
                             <p className="text-xs text-[#9BB0CA] truncate">{b.questionTitle}</p>
                             <p className="text-[11px] text-[#9BB0CA]">
-                              {b.category} · Start {b.startingBid}
+                              {b.category} · Start {b.startingBid} coins
                             </p>
                           </div>
                         </label>
@@ -650,7 +716,10 @@ export function HostDashboard({
                 </p>
                 <button
                   type="button"
-                  onClick={() => setSection('create-room')}
+                  onClick={() => {
+                    setSection('create-room');
+                    onNavigate('/create-room');
+                  }}
                   className="min-h-[46px] rounded-xl bg-[#51D6E8] px-6 text-sm font-bold text-[#08111F]"
                 >
                   Create Room
@@ -660,39 +729,94 @@ export function HostDashboard({
 
           {snapshot && section === 'overview' && (
             <div className="space-y-6">
+              {/* Room Overview Stats */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-5">
-                  <p className="text-xs text-[#9BB0CA]">Active Rooms</p>
-                  <p className="mt-1 font-mono tabular-nums text-3xl font-extrabold text-[#EEF5FF]">
-                    {rooms.filter((r) => r.isActive && r.machineState !== 'ROOM_COMPLETED').length}
-                  </p>
-                </div>
                 <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-5">
                   <p className="text-xs text-[#9BB0CA]">Joined Teams</p>
                   <p className="mt-1 font-mono tabular-nums text-3xl font-extrabold text-[#51D6E8]">
                     {snapshot.room.teamCount}
+                    <span className="text-sm font-normal text-[#9BB0CA]">
+                      /{snapshot.room.settings.maxTeams}
+                    </span>
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-5">
+                  <p className="text-xs text-[#9BB0CA]">Auction Items</p>
+                  <p className="mt-1 font-mono tabular-nums text-2xl font-extrabold text-[#EEF5FF]">
+                    {snapshot.room.itemCount}{' '}
+                    <span className="block text-xs font-normal text-[#9BB0CA]">
+                      {usedItemsCount} used · {snapshot.room.unusedItemCount} unused
+                    </span>
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-5">
+                  <p className="text-xs text-[#9BB0CA]">Timers (Auc / Ans)</p>
+                  <p className="mt-1 font-mono tabular-nums text-2xl font-extrabold text-[#F5B731]">
+                    {snapshot.room.settings.auctionDurationSec}s /{' '}
+                    {snapshot.room.settings.answerDurationSec}s
                   </p>
                 </div>
                 <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-5">
                   <p className="text-xs text-[#9BB0CA]">Highest Bid</p>
-                  <p className="mt-1 font-mono tabular-nums text-3xl font-extrabold text-[#B9F36B]">
+                  <p className="mt-1 font-mono tabular-nums text-2xl font-extrabold text-[#B9F36B]">
                     {snapshot.currentAuction?.highestBidderTeamId
-                      ? snapshot.currentAuction.highestBid
-                      : 0}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-5">
-                  <p className="text-xs text-[#9BB0CA]">Leading Team</p>
-                  <p className="mt-2 font-display text-lg font-bold text-[#EEF5FF] truncate">
-                    {snapshot.currentAuction?.highestBidderTeamName || '—'}
+                      ? `${snapshot.currentAuction.highestBid}c`
+                      : '—'}
+                    <span className="block text-xs font-normal text-[#9BB0CA] truncate">
+                      {snapshot.currentAuction?.highestBidderTeamName || 'No active bids'}
+                    </span>
                   </p>
                 </div>
               </div>
 
+              {/* Economy Configuration Summary */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="rounded-2xl border border-[#51D6E8]/30 bg-[#111E31] p-5 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <Coins className="h-6 w-6 text-[#51D6E8] shrink-0" />
+                    <div>
+                      <p className="text-xs font-semibold text-[#51D6E8]">
+                        Bidding Coins Economy
+                      </p>
+                      <p className="mt-0.5 font-mono text-xs text-[#EEF5FF]">
+                        Start: {snapshot.room.settings.startingCoins} · Correct: +
+                        {snapshot.room.settings.correctCoinReward} · Wrong: -
+                        {snapshot.room.settings.wrongCoinPenalty}
+                      </p>
+                      <p className="text-[11px] text-[#9BB0CA]">
+                        Winning bid deduction:{' '}
+                        {snapshot.room.settings.deductWinningBid ? 'Enabled' : 'Disabled'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-[#B9F36B]/30 bg-[#111E31] p-5 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <Trophy className="h-6 w-6 text-[#B9F36B] shrink-0" />
+                    <div>
+                      <p className="text-xs font-semibold text-[#B9F36B]">
+                        Competition Points Economy
+                      </p>
+                      <p className="mt-0.5 font-mono text-xs text-[#EEF5FF]">
+                        Start: {snapshot.room.settings.startingPoints} · Correct: +
+                        {snapshot.room.settings.correctPointReward} · Wrong: -
+                        {snapshot.room.settings.wrongPointPenalty}
+                      </p>
+                      <p className="text-[11px] text-[#9BB0CA]">
+                        Rankings depend solely on Points &amp; Response Time
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Navigation & Controls Bar */}
               <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-6 flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <p className="text-xs font-semibold text-[#51D6E8]">
-                    Status: {snapshot.room.humanStatus}
+                    Status: {snapshot.room.humanStatus} ·{' '}
+                    {snapshot.room.isActive ? 'Open to Teams' : 'Entry Paused'}
                   </p>
                   <h2 className="mt-1 font-display text-xl font-bold text-[#EEF5FF]">
                     {snapshot.currentHostItem
@@ -709,7 +833,7 @@ export function HostDashboard({
                     <button
                       type="button"
                       disabled={busy || snapshot.room.itemCount === 0}
-                      onClick={() => handleMarkReady(snapshot.room.id)}
+                      onClick={() => handleMarkReady(snapshot.room)}
                       className="min-h-[42px] inline-flex items-center gap-1.5 rounded-xl border border-[#B9F36B]/50 bg-[#B9F36B]/10 px-4 text-xs font-bold text-[#B9F36B] disabled:opacity-40"
                     >
                       <Check className="h-4 w-4" />
@@ -721,14 +845,28 @@ export function HostDashboard({
                     onClick={() => setSection('items')}
                     className="min-h-[42px] rounded-xl border border-[#223552] bg-[#172740] px-4 text-xs font-semibold text-[#EEF5FF]"
                   >
-                    Manage Items
+                    Auction Items
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSection('teams')}
+                    className="min-h-[42px] rounded-xl border border-[#223552] bg-[#172740] px-4 text-xs font-semibold text-[#EEF5FF]"
+                  >
+                    Team Management
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSection('settings')}
+                    className="min-h-[42px] rounded-xl border border-[#223552] bg-[#172740] px-4 text-xs font-semibold text-[#EEF5FF]"
+                  >
+                    Room Settings
                   </button>
                   <button
                     type="button"
                     onClick={() => setSection('live-auction')}
                     className="min-h-[42px] rounded-xl bg-[#51D6E8] px-5 text-xs font-bold text-[#08111F]"
                   >
-                    Go to Live Auction
+                    Go to Auction Controls
                   </button>
                   {snapshot.room.machineState !== 'ROOM_COMPLETED' && (
                     <button
@@ -751,14 +889,11 @@ export function HostDashboard({
             </div>
           )}
 
-          {snapshot && section === 'items' && (
-            <CustomItemsSection snapshot={snapshot} onSnapshotUpdate={handleSnapshotUpdate} />
-          )}
+          {snapshot && section === 'items' && <CustomItemsSection snapshot={snapshot} />}
 
           {snapshot && section === 'live-auction' && (
             <LiveAuctionSection
               snapshot={snapshot}
-              onSnapshotUpdate={handleSnapshotUpdate}
               onShowResults={() => setSection('results')}
             />
           )}
@@ -771,8 +906,8 @@ export function HostDashboard({
                     Joined Teams ({snapshot.teams.length} / {snapshot.room.settings.maxTeams})
                   </h2>
                   <p className="text-xs text-[#9BB0CA]">
-                    Live presence status, unified points/coins balance, and completed answer
-                    sessions.
+                    Independent Bidding Coins &amp; Competition Points, response speeds, and quick
+                    balance adjustment controls.
                   </p>
                 </div>
               </div>
@@ -783,7 +918,7 @@ export function HostDashboard({
                   <span className="font-mono font-bold text-[#51D6E8]">
                     {snapshot.room.roomCode}
                   </span>{' '}
-                  with teams so they can join on their mobile phones.
+                  or your Share Join Link so teams can join from any device.
                 </p>
               ) : (
                 <div className="overflow-x-auto">
@@ -792,11 +927,11 @@ export function HostDashboard({
                       <tr className="border-b border-[#223552] text-xs text-[#9BB0CA]">
                         <th className="py-3 pr-3">Team Name</th>
                         <th className="py-3 px-3">Connection</th>
-                        <th className="py-3 px-3 text-right">Points / Coins</th>
-                        <th className="py-3 px-3 text-right">Sessions</th>
+                        <th className="py-3 px-3 text-right">Bidding Coins</th>
+                        <th className="py-3 px-3 text-right">Comp. Points</th>
+                        <th className="py-3 px-3 text-right">C / W</th>
                         <th className="py-3 px-3 text-right">Response Time</th>
-                        <th className="py-3 px-3 text-right">Joined</th>
-                        <th className="py-3 pl-3 text-right">Action</th>
+                        <th className="py-3 pl-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#223552]/70">
@@ -814,27 +949,41 @@ export function HostDashboard({
                               {t.connectionStatus === 'ONLINE' ? 'Online' : 'Offline'}
                             </span>
                           </td>
-                          <td className="py-3 px-3 text-right font-mono tabular-nums font-bold text-[#B9F36B]">
-                            {t.balance}
+                          <td className="py-3 px-3 text-right font-mono tabular-nums font-bold text-[#51D6E8]">
+                            {t.coinBalance}
                           </td>
-                          <td className="py-3 px-3 text-right font-mono tabular-nums text-[#9BB0CA]">
-                            {t.answerSessionsCount}
+                          <td className="py-3 px-3 text-right font-mono tabular-nums font-bold text-[#B9F36B]">
+                            {t.points}
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono tabular-nums text-xs text-[#9BB0CA]">
+                            {t.correctCount} / {t.wrongCount}
                           </td>
                           <td className="py-3 px-3 text-right font-mono tabular-nums text-[#9BB0CA]">
                             {formatResponseTime(t.totalResponseTimeMs)}
                           </td>
-                          <td className="py-3 px-3 text-right font-mono text-xs text-[#9BB0CA]">
-                            {new Date(t.joinedAt).toLocaleTimeString()}
-                          </td>
                           <td className="py-3 pl-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => setRemoveTeamTarget(t)}
-                              className="rounded-lg p-1.5 text-[#9BB0CA] hover:bg-[#F05252]/15 hover:text-[#F05252]"
-                              title="Remove team"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAdjustTargetTeamId(t.id);
+                                  setSection('settings');
+                                }}
+                                className="rounded-lg px-2 py-1.5 text-xs font-semibold text-[#F5B731] hover:bg-[#F5B731]/15 inline-flex items-center gap-1"
+                                title="Adjust Coins or Points"
+                              >
+                                <Sliders className="h-3.5 w-3.5" />
+                                Adjust
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRemoveTeamTarget(t)}
+                                className="rounded-lg p-1.5 text-[#9BB0CA] hover:bg-[#F05252]/15 hover:text-[#F05252]"
+                                title="Remove team"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -866,10 +1015,10 @@ export function HostDashboard({
                       <tr className="border-b border-[#223552] text-[#9BB0CA]">
                         <th className="py-2.5 pr-3">Seq #</th>
                         <th className="py-2.5 px-3">Team</th>
-                        <th className="py-2.5 px-3 text-right">Amount</th>
+                        <th className="py-2.5 px-3 text-right">Bid (Coins)</th>
                         <th className="py-2.5 px-3">Status</th>
                         <th className="py-2.5 px-3">Note</th>
-                        <th className="py-2.5 pl-3 text-right">Server Time</th>
+                        <th className="py-2.5 pl-3 text-right">Timestamp</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#223552]/70">
@@ -911,7 +1060,7 @@ export function HostDashboard({
               <div className="flex items-center justify-between">
                 <h2 className="font-display text-xl font-bold text-[#EEF5FF]">Live Leaderboard</h2>
                 <span className="text-xs text-[#9BB0CA]">
-                  Sorted by Points DESC, Response Time ASC
+                  Sorted by Competition Points DESC, Response Time ASC
                 </span>
               </div>
               <LeaderboardTable entries={snapshot.leaderboard} showConnection />
@@ -936,13 +1085,14 @@ export function HostDashboard({
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <a
-                    href={`/api/host/rooms/${snapshot.room.id}/export/results-csv`}
+                  <button
+                    type="button"
+                    onClick={() => exportResultsCsv(snapshot)}
                     className="min-h-[42px] inline-flex items-center gap-1.5 rounded-xl bg-[#51D6E8] px-4 text-xs font-bold text-[#08111F]"
                   >
                     <Download className="h-4 w-4" />
                     Export Results CSV
-                  </a>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setSection('history')}
@@ -952,7 +1102,10 @@ export function HostDashboard({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSection('create-room')}
+                    onClick={() => {
+                      setSection('create-room');
+                      onNavigate('/create-room');
+                    }}
                     className="min-h-[42px] rounded-xl border border-[#223552] px-4 text-xs font-semibold text-[#9BB0CA] hover:text-[#EEF5FF]"
                   >
                     Start New Room
@@ -968,7 +1121,7 @@ export function HostDashboard({
           {snapshot && section === 'settings' && (
             <RoomSettingsAndAdjustSection
               snapshot={snapshot}
-              onSnapshotUpdate={handleSnapshotUpdate}
+              preselectedTeamId={adjustTargetTeamId}
             />
           )}
         </section>

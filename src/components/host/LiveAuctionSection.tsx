@@ -8,27 +8,37 @@ import {
   SkipForward,
   Square,
   Timer,
+  Undo2,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
-import { apiRequest, ApiError } from '../../lib/api.ts';
+import { useEffect, useRef, useState } from 'react';
+import {
+  advanceToNextItem,
+  closeAuctionTransaction,
+  evaluateAnswerTransaction,
+  pauseCurrentSession,
+  refundCancelledAuctionTransaction,
+  restartClosedAuction,
+  resumeCurrentSession,
+  RoomActionError,
+  startAnswerTimer,
+  startAuction,
+} from '../../lib/firestoreAuction.ts';
 import { useServerCountdown } from '../../lib/useServerCountdown.ts';
 import { formatResponseTime, type HostRoomSnapshot } from '../../shared/types.ts';
+import { ConfirmDialog } from '../ConfirmDialog.tsx';
 
 interface LiveAuctionSectionProps {
   snapshot: HostRoomSnapshot;
-  onSnapshotUpdate: (snap: HostRoomSnapshot) => void;
   onShowResults: () => void;
 }
 
-export function LiveAuctionSection({
-  snapshot,
-  onSnapshotUpdate,
-  onShowResults,
-}: LiveAuctionSectionProps) {
+export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSectionProps) {
   const { room, currentHostItem, currentAuction, currentAnswerSession, allAuctionBids } = snapshot;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmRefundOpen, setConfirmRefundOpen] = useState(false);
+  const autoClosedAuctionRef = useRef<string | null>(null);
 
   const auctionRemainingMs = useServerCountdown(
     room.machineState === 'AUCTION_OPEN' ? currentAuction?.deadlineTimestamp : null,
@@ -49,18 +59,34 @@ export function LiveAuctionSection({
   const answerTimerExpired =
     room.machineState === 'ANSWER_RUNNING' && !room.isPaused && answerRemainingMs === 0;
 
-  const callAction = async (path: string, body?: unknown) => {
+  // Automatically close the auction atomically in Firestore when timer hits 0.0s
+  useEffect(() => {
+    if (
+      room.machineState === 'AUCTION_OPEN' &&
+      !room.isPaused &&
+      currentAuction &&
+      currentAuction.auctionStatus === 'OPEN' &&
+      auctionRemainingMs === 0 &&
+      autoClosedAuctionRef.current !== currentAuction.id
+    ) {
+      autoClosedAuctionRef.current = currentAuction.id;
+      closeAuctionTransaction(room.id, currentAuction.id).catch((err) => {
+        autoClosedAuctionRef.current = null;
+        setError(err instanceof Error ? err.message : 'Unable to close expired auction.');
+      });
+    }
+  }, [room.id, room.machineState, room.isPaused, currentAuction, auctionRemainingMs]);
+
+  const runAction = async (fn: () => Promise<unknown>) => {
+    if (busy) return;
     setError(null);
     setBusy(true);
     try {
-      const next = await apiRequest<HostRoomSnapshot>(`/api/host/rooms/${room.id}${path}`, {
-        method: 'POST',
-        authMode: 'host',
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      onSnapshotUpdate(next);
+      await fn();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Action failed.');
+      setError(
+        err instanceof RoomActionError || err instanceof Error ? err.message : 'Action failed.',
+      );
     } finally {
       setBusy(false);
     }
@@ -73,6 +99,11 @@ export function LiveAuctionSection({
   const isWinnerStage = ['WINNER_SELECTED', 'ANSWER_PENDING', 'ANSWER_RUNNING'].includes(
     room.machineState,
   );
+
+  const canRefundCancelled =
+    Boolean(currentAuction?.bidDeducted) &&
+    !currentAuction?.bidRefunded &&
+    (isWinnerStage || room.machineState === 'AUCTION_CLOSED');
 
   return (
     <div className="space-y-6">
@@ -111,7 +142,9 @@ export function LiveAuctionSection({
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-semibold text-[#51D6E8]">
-                    {room.humanStatus} · Item {Math.min(room.currentItemIndex + 1, Math.max(1, room.itemCount))} of {room.itemCount}
+                    {room.humanStatus} · Item{' '}
+                    {Math.min(room.currentItemIndex + 1, Math.max(1, room.itemCount))} of{' '}
+                    {room.itemCount}
                   </p>
                   <h2 className="mt-1 font-display text-2xl font-extrabold text-[#EEF5FF]">
                     {currentHostItem ? (
@@ -176,7 +209,7 @@ export function LiveAuctionSection({
               {/* Highest Bid Readout */}
               <div className="grid grid-cols-2 gap-3 rounded-xl border border-[#223552] bg-[#172740]/60 p-4">
                 <div>
-                  <p className="text-xs text-[#9BB0CA]">Highest Bid</p>
+                  <p className="text-xs text-[#9BB0CA]">Highest Bid (Coins)</p>
                   <p className="font-mono tabular-nums text-2xl font-extrabold text-[#51D6E8]">
                     {currentAuction?.highestBidderTeamId ? currentAuction.highestBid : 0}
                   </p>
@@ -195,7 +228,9 @@ export function LiveAuctionSection({
                   <button
                     type="button"
                     disabled={busy || !currentHostItem}
-                    onClick={() => callAction('/auction/start')}
+                    onClick={() =>
+                      currentHostItem && runAction(() => startAuction(room.id, currentHostItem))
+                    }
                     className="min-h-[46px] inline-flex items-center gap-2 rounded-xl bg-[#51D6E8] px-5 text-sm font-bold text-[#08111F] hover:bg-[#6de0ef] disabled:opacity-40"
                   >
                     <Play className="h-4 w-4" />
@@ -207,7 +242,7 @@ export function LiveAuctionSection({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => callAction('/auction/pause')}
+                    onClick={() => runAction(() => pauseCurrentSession(room.id))}
                     className="min-h-[46px] inline-flex items-center gap-2 rounded-xl border border-[#F5B731]/50 bg-[#F5B731]/10 px-4 text-sm font-semibold text-[#F5B731] hover:bg-[#F5B731]/20"
                   >
                     <Pause className="h-4 w-4" />
@@ -219,7 +254,7 @@ export function LiveAuctionSection({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => callAction('/auction/resume')}
+                    onClick={() => runAction(() => resumeCurrentSession(room.id))}
                     className="min-h-[46px] inline-flex items-center gap-2 rounded-xl bg-[#B9F36B] px-5 text-sm font-bold text-[#08111F] hover:bg-[#c8f68a]"
                   >
                     <Play className="h-4 w-4" />
@@ -227,11 +262,13 @@ export function LiveAuctionSection({
                   </button>
                 )}
 
-                {isAuctionOpen && (
+                {isAuctionOpen && currentAuction && (
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => callAction('/auction/end')}
+                    onClick={() =>
+                      runAction(() => closeAuctionTransaction(room.id, currentAuction.id))
+                    }
                     className="min-h-[46px] inline-flex items-center gap-2 rounded-xl border border-[#F05252]/50 bg-[#F05252]/10 px-4 text-sm font-semibold text-[#F05252] hover:bg-[#F05252]/20"
                   >
                     <Square className="h-4 w-4" />
@@ -243,8 +280,11 @@ export function LiveAuctionSection({
                   <>
                     <button
                       type="button"
-                      disabled={busy}
-                      onClick={() => callAction('/auction/restart')}
+                      disabled={busy || !currentHostItem}
+                      onClick={() =>
+                        currentHostItem &&
+                        runAction(() => restartClosedAuction(room.id, currentHostItem))
+                      }
                       className="min-h-[46px] inline-flex items-center gap-2 rounded-xl bg-[#51D6E8] px-5 text-sm font-bold text-[#08111F]"
                     >
                       <RotateCcw className="h-4 w-4" />
@@ -253,7 +293,7 @@ export function LiveAuctionSection({
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => callAction('/answer/evaluate', { decision: 'SKIPPED' })}
+                      onClick={() => runAction(() => evaluateAnswerTransaction(room.id, 'SKIPPED'))}
                       className="min-h-[46px] inline-flex items-center gap-2 rounded-xl border border-[#223552] bg-[#172740] px-4 text-sm font-semibold text-[#EEF5FF]"
                     >
                       <SkipForward className="h-4 w-4" />
@@ -277,6 +317,9 @@ export function LiveAuctionSection({
                     </h3>
                     <p className="text-xs text-[#9BB0CA] font-mono">
                       Final Bid: {currentAuction?.highestBid || 0} coins
+                      {currentAuction?.bidDeducted
+                        ? ` (${currentAuction.deductedAmount} coins deducted)`
+                        : ' (Bid not deducted)'}
                     </p>
                   </div>
 
@@ -284,11 +327,20 @@ export function LiveAuctionSection({
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => callAction('/answer/start')}
+                      onClick={() =>
+                        runAction(() =>
+                          startAnswerTimer(
+                            room.id,
+                            currentAnswerSession.id,
+                            currentHostItem?.answerDurationOverride ?? null,
+                          ),
+                        )
+                      }
                       className="min-h-[46px] inline-flex items-center gap-2 rounded-xl bg-[#F5B731] px-5 text-sm font-bold text-[#08111F] hover:bg-[#f7c557]"
                     >
                       <Timer className="h-4 w-4" />
-                      Start Answer Timer ({currentHostItem?.answerDurationOverride || room.settings.answerDurationSec}s)
+                      Start Answer Timer (
+                      {currentHostItem?.answerDurationOverride || room.settings.answerDurationSec}s)
                     </button>
                   )}
                 </div>
@@ -300,8 +352,8 @@ export function LiveAuctionSection({
                   >
                     <AlertTriangle className="h-5 w-5 shrink-0" />
                     <span>
-                      Answer time is over. Listen to the final response and manually record Wrong,
-                      Correct, or Skip below.
+                      Answer time is over. Listen to the final response and manually record
+                      Correct, Wrong, or Skip below.
                     </span>
                   </div>
                 )}
@@ -310,33 +362,57 @@ export function LiveAuctionSection({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => callAction('/answer/evaluate', { decision: 'CORRECT' })}
-                    className="min-h-[56px] flex items-center justify-center gap-2 rounded-xl bg-[#B9F36B] px-5 py-3 text-base font-extrabold text-[#08111F] hover:bg-[#c8f68a] transition-colors disabled:opacity-50"
+                    onClick={() => runAction(() => evaluateAnswerTransaction(room.id, 'CORRECT'))}
+                    className="min-h-[60px] flex flex-col items-center justify-center rounded-xl bg-[#B9F36B] px-5 py-2.5 text-[#08111F] hover:bg-[#c8f68a] transition-colors disabled:opacity-50"
                   >
-                    <Check className="h-5 w-5" />
-                    CORRECT ANSWER: +{room.settings.correctPoints}
+                    <span className="inline-flex items-center gap-2 text-base font-extrabold">
+                      <Check className="h-5 w-5" />
+                      CORRECT ANSWER
+                    </span>
+                    <span className="font-mono text-xs font-bold">
+                      +{room.settings.correctCoinReward} Coins · +
+                      {room.settings.correctPointReward} Points
+                    </span>
                   </button>
 
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => callAction('/answer/evaluate', { decision: 'WRONG' })}
-                    className="min-h-[56px] flex items-center justify-center gap-2 rounded-xl bg-[#F05252] px-5 py-3 text-base font-extrabold text-white hover:bg-[#e13f3f] transition-colors disabled:opacity-50"
+                    onClick={() => runAction(() => evaluateAnswerTransaction(room.id, 'WRONG'))}
+                    className="min-h-[60px] flex flex-col items-center justify-center rounded-xl bg-[#F05252] px-5 py-2.5 text-white hover:bg-[#e13f3f] transition-colors disabled:opacity-50"
                   >
-                    <X className="h-5 w-5" />
-                    WRONG ANSWER: -{room.settings.wrongDeduction}
+                    <span className="inline-flex items-center gap-2 text-base font-extrabold">
+                      <X className="h-5 w-5" />
+                      WRONG ANSWER
+                    </span>
+                    <span className="font-mono text-xs font-bold">
+                      -{room.settings.wrongCoinPenalty} Coins · -{room.settings.wrongPointPenalty}{' '}
+                      Points
+                    </span>
                   </button>
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {canRefundCancelled && currentAuction && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setConfirmRefundOpen(true)}
+                      className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-[#F5B731]/50 bg-[#F5B731]/10 px-4 text-xs font-semibold text-[#F5B731] hover:bg-[#F5B731]/20"
+                    >
+                      <Undo2 className="h-3.5 w-3.5" />
+                      Cancel Auction &amp; Refund {currentAuction.deductedAmount} Coins
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => callAction('/answer/evaluate', { decision: 'SKIPPED' })}
-                    className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-[#223552] bg-[#111E31] px-4 text-xs font-semibold text-[#9BB0CA] hover:text-[#EEF5FF]"
+                    onClick={() => runAction(() => evaluateAnswerTransaction(room.id, 'SKIPPED'))}
+                    className="ml-auto min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-[#223552] bg-[#111E31] px-4 text-xs font-semibold text-[#9BB0CA] hover:text-[#EEF5FF]"
                   >
                     <SkipForward className="h-3.5 w-3.5" />
-                    Skip / No Answer (0 pts)
+                    Skip / No Answer (0 Coins, 0 Pts)
                   </button>
                 </div>
               </div>
@@ -361,7 +437,7 @@ export function LiveAuctionSection({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => callAction('/auction/next')}
+                  onClick={() => runAction(() => advanceToNextItem(room.id))}
                   className="min-h-[48px] inline-flex items-center gap-2 rounded-xl bg-[#51D6E8] px-6 text-sm font-bold text-[#08111F] hover:bg-[#6de0ef]"
                 >
                   {room.unusedItemCount > 0 ? 'Next Question' : 'Finish Event & Final Results'}
@@ -404,7 +480,7 @@ export function LiveAuctionSection({
                           b.status === 'ACCEPTED' ? 'text-[#51D6E8]' : 'text-[#F05252]'
                         }`}
                       >
-                        {b.bidAmount} · {b.status}
+                        {b.bidAmount} coins · {b.status}
                       </span>
                     </div>
                     <div className="mt-1 flex items-center justify-between text-[11px] text-[#9BB0CA] font-mono">
@@ -425,6 +501,21 @@ export function LiveAuctionSection({
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmRefundOpen}
+        title="Cancel Auction & Refund Bid?"
+        description={`Cancel the current round and refund ${currentAuction?.deductedAmount || 0} Bidding Coins back to ${currentAuction?.highestBidderTeamName || 'the winning team'}?`}
+        confirmLabel="Refund Coins & Skip Item"
+        variant="primary"
+        busy={busy}
+        onConfirm={() => {
+          if (!currentAuction) return;
+          setConfirmRefundOpen(false);
+          runAction(() => refundCancelledAuctionTransaction(room.id, currentAuction.id));
+        }}
+        onCancel={() => setConfirmRefundOpen(false)}
+      />
     </div>
   );
 }

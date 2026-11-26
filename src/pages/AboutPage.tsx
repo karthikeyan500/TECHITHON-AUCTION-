@@ -37,13 +37,14 @@ export function AboutPage({ onNavigate }: AboutPageProps) {
           <div className="flex items-center gap-2.5 text-[#B9F36B]">
             <Coins className="h-5 w-5" />
             <h2 className="font-display text-lg font-bold text-[#EEF5FF]">
-              2. Unified Points &amp; Coins
+              2. Separate Coins &amp; Points
             </h2>
           </div>
           <p className="text-sm text-[#9BB0CA] leading-relaxed">
-            Virtual Coins and Points are the exact same balance (starting at 100 by default). By
-            default, winning an auction does not subtract your bid amount—your score changes based on
-            your verbal answer (+10 correct, -10 wrong, never below 0).
+            Bidding Coins (default 100) are used to bid in auctions—only the winning team&apos;s
+            final bid is deducted. Competition Points (default 0) determine final leaderboard
+            rankings (+10 Coins &amp; +20 Points for correct, -10 Coins &amp; -10 Points for wrong
+            by default).
           </p>
         </div>
 

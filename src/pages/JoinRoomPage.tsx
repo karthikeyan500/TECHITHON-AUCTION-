@@ -1,11 +1,15 @@
 import { ArrowRight, KeyRound, LogIn, Smartphone } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
-import { apiRequest, ApiError, setTeamToken } from '../lib/api.ts';
+import {
+  joinRoomPublic,
+  lookupRoomByCode,
+  RoomActionError,
+} from '../lib/firestoreAuction.ts';
 import type { TeamRoomSnapshot } from '../shared/types.ts';
 
 interface JoinRoomPageProps {
   existingTeamSnapshot: TeamRoomSnapshot | null;
-  onJoined: (snapshot: TeamRoomSnapshot, token: string) => void;
+  onJoined: (snapshot: TeamRoomSnapshot) => void;
   onResumeTeam: () => void;
 }
 
@@ -19,45 +23,79 @@ export function JoinRoomPage({
   const [roomPin, setRoomPin] = useState('');
   const [teamPin, setTeamPin] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [roomPreview, setRoomPreview] = useState<{
+    roomName: string;
+    hasPin: boolean;
+    isActive: boolean;
+    teamCount: number;
+    maxTeams: number;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
+    const code = params.get('code') || params.get('room');
     if (code) {
-      setRoomCode(code.toUpperCase().slice(0, 10));
+      setRoomCode(code.trim().toUpperCase().slice(0, 12));
     }
   }, []);
 
+  // Proactively inspect room metadata from shared cloud Firestore when a 6-char code is entered
+  useEffect(() => {
+    const clean = roomCode.trim().toUpperCase();
+    if (clean.length < 4) {
+      setRoomPreview(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      lookupRoomByCode(clean)
+        .then((meta) => {
+          if (cancelled) return;
+          setRoomPreview({
+            roomName: meta.roomName,
+            hasPin: meta.hasPin,
+            isActive: meta.isActive,
+            teamCount: meta.teamCount,
+            maxTeams: meta.settings.maxTeams,
+          });
+          if (meta.hasPin) {
+            setShowAdvanced(true);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setRoomPreview(null);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [roomCode]);
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setError(null);
     setLoading(true);
     try {
-      const res = await apiRequest<{
-        snapshot: TeamRoomSnapshot;
-        token: string;
-        reconnected: boolean;
-      }>('/api/rooms/join', {
-        method: 'POST',
-        body: JSON.stringify({
-          roomCode: roomCode.trim().toUpperCase(),
-          teamName: teamName.trim(),
-          roomPin: roomPin.trim() || undefined,
-          teamPin: teamPin.trim() || undefined,
-        }),
+      const res = await joinRoomPublic({
+        roomCode: roomCode.trim().toUpperCase(),
+        teamName: teamName.trim(),
+        roomPin: roomPin.trim() || undefined,
+        teamPin: teamPin.trim() || undefined,
       });
-      setTeamToken(res.token);
-      onJoined(res.snapshot, res.token);
+      onJoined(res.snapshot);
     } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.status === 401 && err.message.toLowerCase().includes('pin')) {
+      if (err instanceof RoomActionError) {
+        if (err.code === 'PIN_REQUIRED' || err.code === 'PIN_INVALID' || err.code === 'DUPLICATE_TEAM') {
           setShowAdvanced(true);
         }
         setError(err.message);
       } else {
-        setError('Connection failure. Please check your internet and try again.');
+        setError('Connection failure. Please check your internet connection and try again.');
       }
     } finally {
       setLoading(false);
@@ -74,8 +112,9 @@ export function JoinRoomPage({
               {existingTeamSnapshot.selfTeam.teamName} · {existingTeamSnapshot.room.roomName}
             </p>
             <p className="text-xs text-[#9BB0CA] font-mono tabular-nums">
-              Room {existingTeamSnapshot.room.roomCode} · Balance:{' '}
-              {existingTeamSnapshot.selfTeam.balance} pts
+              Room {existingTeamSnapshot.room.roomCode} ·{' '}
+              {existingTeamSnapshot.selfTeam.coinBalance} coins ·{' '}
+              {existingTeamSnapshot.selfTeam.points} pts
             </p>
           </div>
           <button
@@ -97,7 +136,7 @@ export function JoinRoomPage({
           <div>
             <h1 className="font-display text-2xl font-bold text-[#EEF5FF]">Join Auction Room</h1>
             <p className="text-xs text-[#9BB0CA]">
-              Enter the room code shared by your event host
+              Enter the room code shared by your host — no Google account required
             </p>
           </div>
         </div>
@@ -115,12 +154,19 @@ export function JoinRoomPage({
               type="text"
               required
               autoComplete="off"
-              maxLength={10}
+              maxLength={12}
               value={roomCode}
               onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
               placeholder="e.g. K7M4PQ"
               className="w-full min-h-[50px] rounded-xl border border-[#223552] bg-[#08111F] px-4 font-mono text-lg font-bold tracking-widest uppercase text-[#51D6E8] placeholder:text-[#9BB0CA]/40 focus:border-[#51D6E8] focus:outline-none"
             />
+            {roomPreview && (
+              <p className="mt-1.5 text-xs text-[#B9F36B]">
+                Room found: <strong>{roomPreview.roomName}</strong> ({roomPreview.teamCount}/
+                {roomPreview.maxTeams} teams
+                {roomPreview.hasPin ? ' · PIN protected' : ''})
+              </p>
+            )}
           </div>
 
           <div>
@@ -162,14 +208,14 @@ export function JoinRoomPage({
                     htmlFor="join-room-pin"
                     className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
                   >
-                    Room PIN (if configured)
+                    Room PIN {roomPreview?.hasPin ? '(Required)' : '(if configured)'}
                   </label>
                   <input
                     id="join-room-pin"
                     type="password"
                     value={roomPin}
                     onChange={(e) => setRoomPin(e.target.value)}
-                    placeholder="Optional room PIN"
+                    placeholder="Room access PIN"
                     className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 text-sm text-[#EEF5FF] placeholder:text-[#9BB0CA]/40 focus:border-[#51D6E8] focus:outline-none"
                   />
                 </div>

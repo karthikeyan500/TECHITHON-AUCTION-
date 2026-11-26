@@ -31,7 +31,8 @@ export function LeaderboardTable({
           <tr className="border-b border-[#223552] text-xs font-semibold text-[#9BB0CA]">
             <th className="py-3 pl-4 pr-3">Rank</th>
             <th className="py-3 px-3">Team</th>
-            <th className="py-3 px-3 text-right">Points / Coins</th>
+            <th className="py-3 px-3 text-right">Points</th>
+            <th className="py-3 px-3 text-right">Coins</th>
             {!compact && (
               <>
                 <th className="py-3 px-3 text-right">Correct</th>
@@ -85,7 +86,10 @@ export function LeaderboardTable({
                   </div>
                 </td>
                 <td className="py-3 px-3 text-right font-mono tabular-nums font-bold text-[#B9F36B]">
-                  {entry.balance}
+                  {entry.points}
+                </td>
+                <td className="py-3 px-3 text-right font-mono tabular-nums font-semibold text-[#51D6E8]">
+                  {entry.coinBalance}
                 </td>
                 {!compact && (
                   <>

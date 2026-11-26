@@ -1,66 +1,142 @@
-import { PlusCircle } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
-import { apiRequest, ApiError } from '../../lib/api.ts';
-import type { HostRoomSnapshot } from '../../shared/types.ts';
+import { Coins, Minus, Plus, PlusCircle, RotateCcw, Trophy } from 'lucide-react';
+import { useRef, useState, type FormEvent } from 'react';
+import { createRoom, RoomActionError } from '../../lib/firestoreAuction.ts';
+import {
+  DEFAULT_ROOM_SETTINGS,
+  type HostRoomSnapshot,
+  type RoomSettings,
+} from '../../shared/types.ts';
 
 interface CreateRoomSectionProps {
   onRoomCreated: (snapshot: HostRoomSnapshot) => void;
 }
 
+function StepperField({
+  id,
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  accentClass = 'text-[#EEF5FF]',
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  accentClass?: string;
+  onChange: (next: number) => void;
+}) {
+  const clamp = (n: number) => Math.min(max, Math.max(min, Math.trunc(n)));
+  return (
+    <div>
+      <label htmlFor={id} className="block text-xs font-semibold text-[#9BB0CA] mb-1.5">
+        {label}
+      </label>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => onChange(clamp(value - step))}
+          className="min-h-[44px] min-w-[40px] flex items-center justify-center rounded-xl border border-[#223552] bg-[#08111F] text-[#9BB0CA] hover:text-[#EEF5FF] hover:border-[#51D6E8]"
+          aria-label={`Decrease ${label}`}
+        >
+          <Minus className="h-3.5 w-3.5" />
+        </button>
+        <input
+          id={id}
+          type="number"
+          min={min}
+          max={max}
+          value={value}
+          onChange={(e) => onChange(clamp(Number(e.target.value || 0)))}
+          className={`w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3 text-center font-mono text-sm font-bold focus:border-[#51D6E8] focus:outline-none ${accentClass}`}
+        />
+        <button
+          type="button"
+          onClick={() => onChange(clamp(value + step))}
+          className="min-h-[44px] min-w-[40px] flex items-center justify-center rounded-xl border border-[#223552] bg-[#08111F] text-[#9BB0CA] hover:text-[#EEF5FF] hover:border-[#51D6E8]"
+          aria-label={`Increase ${label}`}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function CreateRoomSection({ onRoomCreated }: CreateRoomSectionProps) {
   const [roomName, setRoomName] = useState('');
   const [roomPin, setRoomPin] = useState('');
-  const [maxTeams, setMaxTeams] = useState(32);
-  const [startingCoins, setStartingCoins] = useState(100);
-  const [auctionDurationSec, setAuctionDurationSec] = useState(30);
-  const [answerDurationSec, setAnswerDurationSec] = useState(20);
-  const [correctPoints, setCorrectPoints] = useState(10);
-  const [wrongDeduction, setWrongDeduction] = useState(10);
-  const [minStartingBid, setMinStartingBid] = useState(10);
-  const [minBidIncrement, setMinBidIncrement] = useState(5);
-  const [deductWinningBid, setDeductWinningBid] = useState(false);
+  const [settings, setSettings] = useState<RoomSettings>({ ...DEFAULT_ROOM_SETTINGS });
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const submittingRef = useRef(false);
+
+  const updateSetting = <K extends keyof RoomSettings>(key: K, val: RoomSettings[K]) => {
+    setSettings((prev) => ({ ...prev, [key]: val }));
+  };
+
+  const handleResetDefaults = () => {
+    setSettings({ ...DEFAULT_ROOM_SETTINGS });
+    setError(null);
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current || loading) return;
+
+    const cleanName = roomName.trim();
+    if (cleanName.length < 2 || cleanName.length > 80) {
+      setError('Room name must be between 2 and 80 characters.');
+      return;
+    }
+
     setError(null);
     setLoading(true);
+    submittingRef.current = true;
+
     try {
-      const snap = await apiRequest<HostRoomSnapshot>('/api/host/rooms', {
-        method: 'POST',
-        authMode: 'host',
-        body: JSON.stringify({
-          roomName,
-          roomPin: roomPin.trim() || undefined,
-          maxTeams,
-          startingCoins,
-          auctionDurationSec,
-          answerDurationSec,
-          correctPoints,
-          wrongDeduction,
-          minStartingBid,
-          minBidIncrement,
-          deductWinningBid,
-        }),
+      const snap = await createRoom({
+        roomName: cleanName,
+        roomPin: roomPin.trim() || undefined,
+        settings,
       });
       onRoomCreated(snap);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to create room.');
+      setError(
+        err instanceof RoomActionError || err instanceof Error
+          ? err.message
+          : 'Unable to create room in cloud database.',
+      );
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 
   return (
     <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-6 sm:p-8 space-y-6">
-      <div className="border-b border-[#223552] pb-4">
-        <h2 className="font-display text-2xl font-bold text-[#EEF5FF]">Create Auction Room</h2>
-        <p className="mt-1 text-sm text-[#9BB0CA]">
-          Configure room limits, timers, and scoring rules. A unique 6-character room code will be
-          generated automatically.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[#223552] pb-4">
+        <div>
+          <h2 className="font-display text-2xl font-bold text-[#EEF5FF]">Create Auction Room</h2>
+          <p className="mt-1 text-sm text-[#9BB0CA]">
+            Configure room capacity, timers, and separate Bidding Coins &amp; Competition Points
+            rules. A shareable 6-character code will open directly in your Host Control Dashboard.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleResetDefaults}
+          className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-[#223552] bg-[#08111F] px-3.5 text-xs font-semibold text-[#9BB0CA] hover:text-[#EEF5FF] hover:border-[#51D6E8]"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          Reset to Defaults
+        </button>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -103,169 +179,213 @@ export function CreateRoomSection({ onRoomCreated }: CreateRoomSectionProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <label
-              htmlFor="cr-max-teams"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Maximum Teams
-            </label>
-            <input
-              id="cr-max-teams"
-              type="number"
-              min={2}
-              max={200}
-              value={maxTeams}
-              onChange={(e) => setMaxTeams(Number(e.target.value))}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="cr-starting-coins"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Starting Coins / Points
-            </label>
-            <input
-              id="cr-starting-coins"
-              type="number"
-              min={0}
-              max={100000}
-              value={startingCoins}
-              onChange={(e) => setStartingCoins(Number(e.target.value))}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="cr-auction-timer"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Auction Timer (seconds)
-            </label>
-            <input
-              id="cr-auction-timer"
-              type="number"
-              min={5}
-              max={600}
-              value={auctionDurationSec}
-              onChange={(e) => setAuctionDurationSec(Number(e.target.value))}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="cr-answer-timer"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Answer Timer (seconds)
-            </label>
-            <input
-              id="cr-answer-timer"
-              type="number"
-              min={5}
-              max={300}
-              value={answerDurationSec}
-              onChange={(e) => setAnswerDurationSec(Number(e.target.value))}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="cr-correct-pts"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Correct Answer Points (+)
-            </label>
-            <input
-              id="cr-correct-pts"
-              type="number"
-              min={1}
-              max={1000}
-              value={correctPoints}
-              onChange={(e) => setCorrectPoints(Number(e.target.value))}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#B9F36B] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="cr-wrong-pts"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Wrong Answer Deduction (-)
-            </label>
-            <input
-              id="cr-wrong-pts"
-              type="number"
-              min={0}
-              max={1000}
-              value={wrongDeduction}
-              onChange={(e) => setWrongDeduction(Number(e.target.value))}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#F05252] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="cr-min-start"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Default Min Starting Bid
-            </label>
-            <input
-              id="cr-min-start"
-              type="number"
-              min={1}
-              max={10000}
-              value={minStartingBid}
-              onChange={(e) => setMinStartingBid(Number(e.target.value))}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="cr-min-inc"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Minimum Bid Increment
-            </label>
-            <input
-              id="cr-min-inc"
-              type="number"
-              min={1}
-              max={1000}
-              value={minBidIncrement}
-              onChange={(e) => setMinBidIncrement(Number(e.target.value))}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
+        {/* Room Limits & Timers */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <StepperField
+            id="cr-max-teams"
+            label="Maximum Teams"
+            value={settings.maxTeams}
+            min={2}
+            max={200}
+            step={2}
+            onChange={(v) => updateSetting('maxTeams', v)}
+          />
+          <StepperField
+            id="cr-auction-timer"
+            label="Auction Timer (s)"
+            value={settings.auctionDurationSec}
+            min={5}
+            max={600}
+            step={5}
+            onChange={(v) => updateSetting('auctionDurationSec', v)}
+          />
+          <StepperField
+            id="cr-answer-timer"
+            label="Answer Timer (s)"
+            value={settings.answerDurationSec}
+            min={5}
+            max={300}
+            step={5}
+            onChange={(v) => updateSetting('answerDurationSec', v)}
+          />
+          <StepperField
+            id="cr-min-start"
+            label="Min Starting Bid"
+            value={settings.minStartingBid}
+            min={1}
+            max={10000}
+            step={5}
+            accentClass="text-[#51D6E8]"
+            onChange={(v) => updateSetting('minStartingBid', v)}
+          />
+          <StepperField
+            id="cr-min-inc"
+            label="Min Bid Increment"
+            value={settings.minBidIncrement}
+            min={1}
+            max={1000}
+            step={5}
+            accentClass="text-[#51D6E8]"
+            onChange={(v) => updateSetting('minBidIncrement', v)}
+          />
         </div>
 
-        <label className="flex items-start gap-3 rounded-xl border border-[#223552] bg-[#08111F] p-4 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={deductWinningBid}
-            onChange={(e) => setDeductWinningBid(e.target.checked)}
-            className="mt-1 h-4 w-4 rounded accent-[#51D6E8]"
-          />
-          <div>
-            <span className="block text-sm font-semibold text-[#EEF5FF]">
-              Deduct Winning Bid from Team Balance (Default: OFF)
-            </span>
-            <span className="block text-xs text-[#9BB0CA]">
-              By default, bids only determine floor priority and are NOT deducted. Enable only if
-              your event rules subtract winning bids.
-            </span>
+        {/* Separate Coin & Point Economy Configuration */}
+        <div className="rounded-2xl border border-[#223552] bg-[#08111F]/70 p-5 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#223552] pb-3">
+            <div>
+              <h3 className="font-display text-base font-bold text-[#EEF5FF]">
+                Coin &amp; Point Economy Settings
+              </h3>
+              <p className="text-xs text-[#9BB0CA]">
+                Bidding Coins fund auction bids; Competition Points determine leaderboard standings.
+              </p>
+            </div>
           </div>
-        </label>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Bidding Coins */}
+            <div className="rounded-xl border border-[#51D6E8]/30 bg-[#111E31]/80 p-4 space-y-4">
+              <div className="flex items-center gap-2 text-[#51D6E8]">
+                <Coins className="h-4 w-4" />
+                <span className="font-display text-sm font-bold">
+                  Bidding Coins (Auction Currency)
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <StepperField
+                  id="cr-start-coins"
+                  label="Starting Coins"
+                  value={settings.startingCoins}
+                  min={0}
+                  max={100000}
+                  step={10}
+                  accentClass="text-[#51D6E8]"
+                  onChange={(v) => updateSetting('startingCoins', v)}
+                />
+                <StepperField
+                  id="cr-correct-coins"
+                  label="Correct Answer (+Coins)"
+                  value={settings.correctCoinReward}
+                  min={0}
+                  max={10000}
+                  step={5}
+                  accentClass="text-[#B9F36B]"
+                  onChange={(v) => updateSetting('correctCoinReward', v)}
+                />
+                <StepperField
+                  id="cr-wrong-coins"
+                  label="Wrong Answer (-Coins)"
+                  value={settings.wrongCoinPenalty}
+                  min={0}
+                  max={10000}
+                  step={5}
+                  accentClass="text-[#F05252]"
+                  onChange={(v) => updateSetting('wrongCoinPenalty', v)}
+                />
+                <StepperField
+                  id="cr-part-coins"
+                  label="Participation (+Coins)"
+                  value={settings.participationCoinReward}
+                  min={0}
+                  max={5000}
+                  step={5}
+                  accentClass="text-[#51D6E8]"
+                  onChange={(v) => updateSetting('participationCoinReward', v)}
+                />
+              </div>
+            </div>
+
+            {/* Competition Points */}
+            <div className="rounded-xl border border-[#B9F36B]/30 bg-[#111E31]/80 p-4 space-y-4">
+              <div className="flex items-center gap-2 text-[#B9F36B]">
+                <Trophy className="h-4 w-4" />
+                <span className="font-display text-sm font-bold">
+                  Competition Points (Leaderboard Score)
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <StepperField
+                  id="cr-start-pts"
+                  label="Starting Points"
+                  value={settings.startingPoints}
+                  min={-10000}
+                  max={100000}
+                  step={10}
+                  accentClass="text-[#B9F36B]"
+                  onChange={(v) => updateSetting('startingPoints', v)}
+                />
+                <StepperField
+                  id="cr-correct-pts"
+                  label="Correct Answer (+Points)"
+                  value={settings.correctPointReward}
+                  min={0}
+                  max={10000}
+                  step={5}
+                  accentClass="text-[#B9F36B]"
+                  onChange={(v) => updateSetting('correctPointReward', v)}
+                />
+                <StepperField
+                  id="cr-wrong-pts"
+                  label="Wrong Answer (-Points)"
+                  value={settings.wrongPointPenalty}
+                  min={0}
+                  max={10000}
+                  step={5}
+                  accentClass="text-[#F05252]"
+                  onChange={(v) => updateSetting('wrongPointPenalty', v)}
+                />
+                <StepperField
+                  id="cr-part-pts"
+                  label="Participation (+Points)"
+                  value={settings.participationPointReward}
+                  min={0}
+                  max={5000}
+                  step={5}
+                  accentClass="text-[#B9F36B]"
+                  onChange={(v) => updateSetting('participationPointReward', v)}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+            <label className="flex items-start gap-3 rounded-xl border border-[#223552] bg-[#111E31] p-4 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.deductWinningBid}
+                onChange={(e) => updateSetting('deductWinningBid', e.target.checked)}
+                className="mt-1 h-4 w-4 rounded accent-[#51D6E8]"
+              />
+              <div>
+                <span className="block text-sm font-semibold text-[#EEF5FF]">
+                  Deduct Winning Bid from Coins (Default: Enabled)
+                </span>
+                <span className="block text-xs text-[#9BB0CA]">
+                  Only the winning team&apos;s final bid is deducted from their Bidding Coins when
+                  an auction closes. Losing teams keep all coins.
+                </span>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-3 rounded-xl border border-[#223552] bg-[#111E31] p-4 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.allowNegativePoints}
+                onChange={(e) => updateSetting('allowNegativePoints', e.target.checked)}
+                className="mt-1 h-4 w-4 rounded accent-[#B9F36B]"
+              />
+              <div>
+                <span className="block text-sm font-semibold text-[#EEF5FF]">
+                  Allow Negative Competition Points (Default: Floor at 0)
+                </span>
+                <span className="block text-xs text-[#9BB0CA]">
+                  When unchecked, Competition Points stop at 0. Bidding Coins always floor at 0.
+                </span>
+              </div>
+            </label>
+          </div>
+        </div>
 
         {error && (
           <div
@@ -282,7 +402,7 @@ export function CreateRoomSection({ onRoomCreated }: CreateRoomSectionProps) {
           className="min-h-[48px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#51D6E8] px-6 py-3 text-sm font-bold text-[#08111F] hover:bg-[#6de0ef] transition-colors disabled:opacity-50"
         >
           <PlusCircle className="h-4 w-4" />
-          {loading ? 'Creating Room...' : 'Create Room & Generate Code'}
+          {loading ? 'Creating Room...' : 'Create Room & Open Host Control'}
         </button>
       </form>
     </div>

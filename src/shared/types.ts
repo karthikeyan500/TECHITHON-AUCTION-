@@ -24,10 +24,21 @@ export type AnswerDecision = 'PENDING' | 'CORRECT' | 'WRONG' | 'SKIPPED';
 
 export type DifficultyLevel = 'Easy' | 'Medium' | 'Hard' | 'Expert';
 
+export type CurrencyType = 'COINS' | 'POINTS';
+
+export type TransactionType =
+  | 'BID_DEDUCTION'
+  | 'CORRECT_REWARD'
+  | 'WRONG_PENALTY'
+  | 'PARTICIPATION_REWARD'
+  | 'MANUAL_ADJUSTMENT'
+  | 'REFUND';
+
 export interface HostUser {
   id: string;
   username: string;
   displayName: string;
+  email?: string;
   role: 'HOST';
   createdAt: number;
 }
@@ -35,14 +46,38 @@ export interface HostUser {
 export interface RoomSettings {
   maxTeams: number;
   startingCoins: number;
+  startingPoints: number;
   auctionDurationSec: number;
   answerDurationSec: number;
-  correctPoints: number;
-  wrongDeduction: number;
+  correctCoinReward: number;
+  correctPointReward: number;
+  wrongCoinPenalty: number;
+  wrongPointPenalty: number;
+  participationCoinReward: number;
+  participationPointReward: number;
   minStartingBid: number;
   minBidIncrement: number;
   deductWinningBid: boolean;
+  allowNegativePoints: boolean;
 }
+
+export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
+  maxTeams: 32,
+  startingCoins: 100,
+  startingPoints: 0,
+  auctionDurationSec: 30,
+  answerDurationSec: 20,
+  correctCoinReward: 10,
+  correctPointReward: 20,
+  wrongCoinPenalty: 10,
+  wrongPointPenalty: 10,
+  participationCoinReward: 0,
+  participationPointReward: 0,
+  minStartingBid: 10,
+  minBidIncrement: 5,
+  deductWinningBid: true,
+  allowNegativePoints: false,
+};
 
 export interface RoomSummary {
   id: string;
@@ -60,6 +95,7 @@ export interface RoomSummary {
   settings: RoomSettings;
   currentItemIndex: number;
   currentAuctionId: string | null;
+  currentAnswerSessionId: string | null;
   teamCount: number;
   itemCount: number;
   unusedItemCount: number;
@@ -95,6 +131,8 @@ export interface PublicAuctionItem {
   imageOrEmoji: string;
   difficulty: DifficultyLevel | '';
   startingBid: number;
+  auctionDurationOverride: number | null;
+  answerDurationOverride: number | null;
   status: 'PENDING' | 'COMPLETED' | 'SKIPPED';
 }
 
@@ -117,7 +155,9 @@ export interface Team {
   id: string;
   roomId: string;
   teamName: string;
-  balance: number;
+  nameSlug: string;
+  coinBalance: number;
+  points: number;
   correctCount: number;
   wrongCount: number;
   answerSessionsCount: number;
@@ -132,7 +172,8 @@ export interface LeaderboardEntry {
   rank: number;
   teamId: string;
   teamName: string;
-  balance: number;
+  points: number;
+  coinBalance: number;
   correctCount: number;
   wrongCount: number;
   answerSessionsCount: number;
@@ -144,6 +185,7 @@ export interface AuctionState {
   id: string;
   roomId: string;
   itemId: string;
+  startingBid: number;
   auctionStatus: 'OPEN' | 'CLOSED' | 'WINNER_SELECTED' | 'NO_BIDS' | 'COMPLETED' | 'SKIPPED';
   startTimestamp: number;
   deadlineTimestamp: number;
@@ -152,6 +194,9 @@ export interface AuctionState {
   highestBidderTeamId: string | null;
   highestBidderTeamName: string | null;
   sequenceCounter: number;
+  bidDeducted: boolean;
+  deductedAmount: number;
+  bidRefunded: boolean;
 }
 
 export interface BidRecord {
@@ -181,19 +226,21 @@ export interface AnswerSession {
   hostDecision: AnswerDecision;
 }
 
-export interface ScoreTransaction {
+export interface EconomyTransaction {
   id: string;
   roomId: string;
   teamId: string;
   teamName: string;
-  itemId: string | null;
-  auctionId: string | null;
+  currencyType: CurrencyType;
+  transactionType: TransactionType;
   previousBalance: number;
   configuredChange: number;
   actualChange: number;
   newBalance: number;
   reason: string;
-  decisionType: 'CORRECT' | 'WRONG' | 'WINNING_BID_DEDUCTION' | 'MANUAL_ADJUSTMENT';
+  itemId: string | null;
+  itemName: string | null;
+  auctionId: string | null;
   hostId: string;
   timestamp: number;
 }
@@ -209,13 +256,16 @@ export interface AuctionHistoryEntry {
   winningTeamId: string | null;
   winningTeamName: string | null;
   finalBid: number;
+  winningBidDeducted: number;
   auctionStartTimestamp: number;
   auctionEndTimestamp: number | null;
   answerStartTimestamp: number | null;
   hostDecision: AnswerDecision | 'NO_BIDS';
   responseTimeMs: number | null;
+  coinsChange: number;
   pointsChange: number;
-  finalBalance: number | null;
+  finalCoinBalance: number | null;
+  finalPoints: number | null;
   timestamp: number;
 }
 
@@ -235,12 +285,13 @@ export interface HostRoomSnapshot extends PublicRoomSnapshot {
   currentHostItem: AuctionItem | null;
   teams: Team[];
   allAuctionBids: BidRecord[];
-  scoreTransactions: ScoreTransaction[];
+  transactions: EconomyTransaction[];
   history: AuctionHistoryEntry[];
 }
 
 export interface TeamRoomSnapshot extends PublicRoomSnapshot {
   selfTeam: Team;
+  recentTransactions: EconomyTransaction[];
 }
 
 export function getHumanRoomStatus(
@@ -270,15 +321,15 @@ export function getHumanRoomStatus(
 }
 
 /**
- * Authoritative deterministic leaderboard ranking algorithm:
- * 1. Higher balance (points/coins) ranks first.
+ * Authoritative deterministic Points-Only leaderboard ranking algorithm:
+ * 1. Higher `points` ranks first (coinBalance NEVER affects rank).
  * 2. Lower total recorded responseTimeMs ranks first.
- * 3. Identical balance AND responseTimeMs share the same rank.
+ * 3. Identical points AND responseTimeMs share the same rank.
  */
 export function computeRankedLeaderboard(teams: Team[]): LeaderboardEntry[] {
   const active = teams.filter((t) => t.participationStatus === 'ACTIVE');
   const sorted = [...active].sort((a, b) => {
-    if (b.balance !== a.balance) return b.balance - a.balance;
+    if (b.points !== a.points) return b.points - a.points;
     if (a.totalResponseTimeMs !== b.totalResponseTimeMs) {
       return a.totalResponseTimeMs - b.totalResponseTimeMs;
     }
@@ -292,7 +343,7 @@ export function computeRankedLeaderboard(teams: Team[]): LeaderboardEntry[] {
     if (i > 0) {
       const prev = sorted[i - 1];
       if (
-        prev.balance === t.balance &&
+        prev.points === t.points &&
         prev.totalResponseTimeMs === t.totalResponseTimeMs
       ) {
         rank = ranked[i - 1].rank;
@@ -302,7 +353,8 @@ export function computeRankedLeaderboard(teams: Team[]): LeaderboardEntry[] {
       rank,
       teamId: t.id,
       teamName: t.teamName,
-      balance: t.balance,
+      points: t.points,
+      coinBalance: t.coinBalance,
       correctCount: t.correctCount,
       wrongCount: t.wrongCount,
       answerSessionsCount: t.answerSessionsCount,

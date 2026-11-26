@@ -15,8 +15,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { LeaderboardTable } from '../components/LeaderboardTable.tsx';
 import { PodiumDisplay } from '../components/PodiumDisplay.tsx';
-import { apiRequest, getTeamToken, setTeamToken } from '../lib/api.ts';
-import { getSocket } from '../lib/socket.ts';
+import {
+  markTeamOffline,
+  placeBidTransaction,
+  reconnectStoredTeamSession,
+  subscribeTeamRoom,
+} from '../lib/firestoreAuction.ts';
 import { useServerCountdown } from '../lib/useServerCountdown.ts';
 import type { TeamRoomSnapshot } from '../shared/types.ts';
 
@@ -32,20 +36,19 @@ export function TeamDashboard({
   onLeftRoom,
 }: TeamDashboardProps) {
   const [snapshot, setSnapshot] = useState<TeamRoomSnapshot | null>(initialSnapshot);
-  const [socketStatus, setSocketStatus] = useState<'connected' | 'reconnecting' | 'disconnected'>(
-    'connected',
-  );
+  const [syncStatus, setSyncStatus] = useState<'connected' | 'reconnecting'>('connected');
   const [bidAmount, setBidAmount] = useState<string>('');
   const [submittingBid, setSubmittingBid] = useState(false);
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'info' | 'warning' | 'error';
     text: string;
   } | null>(null);
-  const [activeTab, setActiveTab] = useState<'bids' | 'leaderboard'>('bids');
+  const [activeTab, setActiveTab] = useState<'bids' | 'leaderboard' | 'transactions'>('bids');
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
 
   const prevHighestTeamRef = useRef<string | null>(null);
-  const prevBalanceRef = useRef<number | null>(null);
+  const prevCoinsRef = useRef<number | null>(null);
+  const prevPointsRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (initialSnapshot) {
@@ -53,93 +56,45 @@ export function TeamDashboard({
     }
   }, [initialSnapshot]);
 
-  // Recover team session on mount / refresh if initialSnapshot is null
+  // Recover stored session if user navigated directly to /team
   useEffect(() => {
     if (snapshot) return;
-    apiRequest<{ snapshot: TeamRoomSnapshot; token: string }>('/api/team/me', {
-      authMode: 'team',
-    })
-      .then((res) => {
-        setTeamToken(res.token);
-        setSnapshot(res.snapshot);
+    reconnectStoredTeamSession()
+      .then((snap) => {
+        if (snap) setSnapshot(snap);
       })
       .catch(() => {
         // Not joined yet
       });
   }, [snapshot]);
 
-  // Socket.IO room subscription & reconnection recovery
+  // Real-time Firestore room subscription
   useEffect(() => {
-    if (!snapshot) return;
-    const socket = getSocket();
+    if (!snapshot?.room.id || !snapshot?.selfTeam.id) return;
+    setSyncStatus('connected');
 
-    const subscribe = () => {
-      socket.emit('subscribe:team', { token: getTeamToken() || undefined }, (res: { ok: boolean }) => {
-        if (res?.ok) {
-          setSocketStatus('connected');
-        }
-      });
-    };
+    const unsub = subscribeTeamRoom(
+      snapshot.room.id,
+      snapshot.selfTeam.id,
+      (next) => {
+        setSyncStatus('connected');
+        setSnapshot(next);
+      },
+      (removedMsg) => {
+        setFeedback({ type: 'error', text: removedMsg });
+        setTimeout(() => {
+          onLeftRoom();
+        }, 1600);
+      },
+      () => {
+        setSyncStatus('reconnecting');
+      },
+    );
 
-    const onConnect = () => {
-      setSocketStatus('connected');
-      subscribe();
-      apiRequest<{ snapshot: TeamRoomSnapshot; token: string }>('/api/team/me', {
-        authMode: 'team',
-      })
-        .then((res) => {
-          setTeamToken(res.token);
-          setSnapshot(res.snapshot);
-        })
-        .catch(() => {});
-    };
+    return () => unsub();
+  }, [snapshot?.room.id, snapshot?.selfTeam.id, onLeftRoom]);
 
-    const onDisconnect = () => {
-      setSocketStatus('reconnecting');
-    };
-
-    const onConnectError = () => {
-      setSocketStatus('disconnected');
-    };
-
-    const onTeamState = (next: TeamRoomSnapshot) => {
-      setSnapshot(next);
-    };
-
-    const onTeamRemoved = (payload: { message?: string }) => {
-      setFeedback({
-        type: 'error',
-        text: payload?.message || 'Your team was removed from this room.',
-      });
-      setTeamToken(null);
-      setTimeout(() => {
-        onLeftRoom();
-      }, 1500);
-    };
-
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('connect_error', onConnectError);
-    socket.on('team:state', onTeamState);
-    socket.on('team:removed', onTeamRemoved);
-
-    if (socket.connected) {
-      subscribe();
-    } else {
-      setSocketStatus('reconnecting');
-      socket.connect();
-    }
-
-    return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('connect_error', onConnectError);
-      socket.off('team:state', onTeamState);
-      socket.off('team:removed', onTeamRemoved);
-    };
-  }, [snapshot?.selfTeam.id, onLeftRoom]);
-
-  // Track outbid and points updates for clear participant feedback
+  // Track outbid, coin balance, and point balance notifications separately
   useEffect(() => {
     if (!snapshot) return;
     const myId = snapshot.selfTeam.id;
@@ -158,17 +113,32 @@ export function TeamDashboard({
     }
     prevHighestTeamRef.current = currHighTeam;
 
-    if (
-      prevBalanceRef.current !== null &&
-      prevBalanceRef.current !== snapshot.selfTeam.balance
-    ) {
-      const diff = snapshot.selfTeam.balance - prevBalanceRef.current;
+    const coinsChanged =
+      prevCoinsRef.current !== null && prevCoinsRef.current !== snapshot.selfTeam.coinBalance;
+    const pointsChanged =
+      prevPointsRef.current !== null && prevPointsRef.current !== snapshot.selfTeam.points;
+
+    if (coinsChanged || pointsChanged) {
+      const parts: string[] = [];
+      let positive = true;
+      if (coinsChanged && prevCoinsRef.current !== null) {
+        const diffC = snapshot.selfTeam.coinBalance - prevCoinsRef.current;
+        parts.push(`${diffC >= 0 ? '+' : ''}${diffC} Coins`);
+        if (diffC < 0) positive = false;
+      }
+      if (pointsChanged && prevPointsRef.current !== null) {
+        const diffP = snapshot.selfTeam.points - prevPointsRef.current;
+        parts.push(`${diffP >= 0 ? '+' : ''}${diffP} Points`);
+        if (diffP < 0) positive = false;
+      }
       setFeedback({
-        type: diff >= 0 ? 'success' : 'warning',
-        text: `Your points have been updated (${diff >= 0 ? '+' : ''}${diff} pts).`,
+        type: positive ? 'success' : 'warning',
+        text: `Balance updated: ${parts.join(', ')}.`,
       });
     }
-    prevBalanceRef.current = snapshot.selfTeam.balance;
+
+    prevCoinsRef.current = snapshot.selfTeam.coinBalance;
+    prevPointsRef.current = snapshot.selfTeam.points;
   }, [snapshot]);
 
   const auctionRemainingMs = useServerCountdown(
@@ -236,13 +206,20 @@ export function TeamDashboard({
     );
   }
 
-  const { room, selfTeam, currentItem, currentAuction, currentAnswerSession } = snapshot;
-  const isAuctionOpen = room.machineState === 'AUCTION_OPEN' && !room.isPaused && room.isActive;
+  const { room, selfTeam, currentItem, currentAuction, currentAnswerSession, leaderboard } =
+    snapshot;
+  const isAuctionOpen =
+    room.machineState === 'AUCTION_OPEN' &&
+    !room.isPaused &&
+    room.isActive &&
+    auctionRemainingMs > 0;
   const isHighestBidder = currentAuction?.highestBidderTeamId === selfTeam.id;
   const isWinner =
     currentAnswerSession?.winningTeamId === selfTeam.id &&
     ['WINNER_SELECTED', 'ANSWER_PENDING', 'ANSWER_RUNNING'].includes(room.machineState);
   const inc = Math.max(1, room.settings.minBidIncrement);
+  const insufficientForMinBid = selfTeam.coinBalance < minRequiredBid;
+  const myRank = leaderboard.find((e) => e.teamId === selfTeam.id)?.rank ?? null;
 
   const placeBid = async (targetAmount?: number) => {
     const numeric = Math.trunc(Number(targetAmount ?? bidAmount));
@@ -258,35 +235,25 @@ export function TeamDashboard({
       setFeedback({ type: 'warning', text: 'You cannot outbid your own current bid.' });
       return;
     }
+    if (numeric > selfTeam.coinBalance) {
+      setFeedback({
+        type: 'error',
+        text: `Insufficient Bidding Coins (${selfTeam.coinBalance} coins available).`,
+      });
+      return;
+    }
 
     setSubmittingBid(true);
-    const clientRequestId = `${selfTeam.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
     try {
-      const socket = getSocket();
-      if (socket.connected) {
-        const res = await new Promise<{ ok: boolean; message: string }>((resolve) => {
-          socket.emit(
-            'team:place_bid',
-            { amount: numeric, clientRequestId, token: getTeamToken() || undefined },
-            (ack: { ok: boolean; message: string }) => resolve(ack),
-          );
-        });
-        setFeedback({
-          type: res.ok ? 'success' : 'error',
-          text: res.message,
-        });
-      } else {
-        const res = await apiRequest<{ ok: boolean; message: string }>('/api/team/bid', {
-          method: 'POST',
-          authMode: 'team',
-          body: JSON.stringify({ amount: numeric, clientRequestId }),
-        });
-        setFeedback({
-          type: res.ok ? 'success' : 'error',
-          text: res.message,
-        });
-      }
+      const res = await placeBidTransaction({
+        roomId: room.id,
+        teamId: selfTeam.id,
+        amount: numeric,
+      });
+      setFeedback({
+        type: res.ok ? 'success' : 'error',
+        text: res.message,
+      });
     } catch (err) {
       setFeedback({
         type: 'error',
@@ -298,12 +265,7 @@ export function TeamDashboard({
   };
 
   const handleLeave = async () => {
-    try {
-      await apiRequest('/api/rooms/leave', { method: 'POST', authMode: 'team' });
-    } catch {
-      // ignore
-    }
-    setTeamToken(null);
+    await markTeamOffline();
     setLeaveConfirmOpen(false);
     onLeftRoom();
   };
@@ -314,7 +276,7 @@ export function TeamDashboard({
   return (
     <main className="mx-auto max-w-5xl px-3 sm:px-6 py-4 sm:py-8 pb-36 lg:pb-10 space-y-5">
       {/* Connection Recovery Banner */}
-      {socketStatus !== 'connected' && (
+      {syncStatus !== 'connected' && (
         <div
           role="alert"
           className="rounded-xl border border-[#F5B731]/50 bg-[#F5B731]/10 px-4 py-3 flex items-center justify-between gap-3 text-sm text-[#F5B731]"
@@ -322,14 +284,12 @@ export function TeamDashboard({
           <div className="flex items-center gap-2">
             <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
             <span>
-              {socketStatus === 'reconnecting'
-                ? 'Connection lost. Attempting to reconnect and restore your room state...'
-                : 'Disconnected from server. Retrying automatically...'}
+              Sync interrupted. Attempting to reconnect and restore your live room state...
             </span>
           </div>
           <button
             type="button"
-            onClick={() => getSocket().connect()}
+            onClick={() => void reconnectStoredTeamSession().then((s) => s && setSnapshot(s))}
             className="rounded-lg bg-[#F5B731] px-3 py-1 text-xs font-bold text-[#08111F] whitespace-nowrap shrink-0"
           >
             Retry
@@ -337,7 +297,7 @@ export function TeamDashboard({
         </div>
       )}
 
-      {/* Top Identity & Balance Strip */}
+      {/* Top Identity & Separate Coins / Points Strip */}
       <section className="rounded-2xl border border-[#223552] bg-[#111E31] p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
@@ -347,10 +307,10 @@ export function TeamDashboard({
               <span className="truncate">{room.roomName}</span>
               <span aria-hidden="true">·</span>
               <span className="inline-flex items-center gap-1">
-                {socketStatus === 'connected' ? (
+                {syncStatus === 'connected' ? (
                   <>
                     <Wifi className="h-3.5 w-3.5 text-[#B9F36B]" />
-                    <span className="text-[#B9F36B]">Connected</span>
+                    <span className="text-[#B9F36B]">Live</span>
                   </>
                 ) : (
                   <>
@@ -365,19 +325,33 @@ export function TeamDashboard({
             </h1>
             <p className="mt-0.5 text-xs font-medium text-[#9BB0CA]">
               Status: <span className="text-[#EEF5FF]">{room.humanStatus}</span>
+              {myRank !== null ? ` · Current Rank #${myRank}` : ''}
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="rounded-xl border border-[#223552] bg-[#08111F] px-4 py-2.5 text-right">
-              <p className="text-[11px] font-medium text-[#9BB0CA] flex items-center justify-end gap-1">
-                <Coins className="h-3.5 w-3.5 text-[#B9F36B]" />
-                Points / Coins
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Separate Bidding Coins Card */}
+            <div className="rounded-xl border border-[#51D6E8]/40 bg-[#08111F] px-4 py-2.5 text-right min-w-[126px]">
+              <p className="text-[11px] font-semibold text-[#51D6E8] flex items-center justify-end gap-1">
+                <Coins className="h-3.5 w-3.5" />
+                BIDDING COINS
               </p>
-              <p className="font-mono tabular-nums text-2xl font-extrabold text-[#B9F36B]">
-                {selfTeam.balance}
+              <p className="font-mono tabular-nums text-2xl font-extrabold text-[#51D6E8]">
+                {selfTeam.coinBalance}
               </p>
             </div>
+
+            {/* Separate Competition Points Card */}
+            <div className="rounded-xl border border-[#B9F36B]/40 bg-[#08111F] px-4 py-2.5 text-right min-w-[126px]">
+              <p className="text-[11px] font-semibold text-[#B9F36B] flex items-center justify-end gap-1">
+                <Trophy className="h-3.5 w-3.5" />
+                COMP. POINTS
+              </p>
+              <p className="font-mono tabular-nums text-2xl font-extrabold text-[#B9F36B]">
+                {selfTeam.points}
+              </p>
+            </div>
+
             <button
               type="button"
               onClick={() => setLeaveConfirmOpen(true)}
@@ -399,7 +373,7 @@ export function TeamDashboard({
               Event Completed — Final Results
             </h2>
             <p className="text-sm text-[#9BB0CA]">
-              Final official standings ranked by points and total response time.
+              Final official standings ranked by Competition Points and total response time.
             </p>
           </div>
           <PodiumDisplay entries={snapshot.leaderboard} />
@@ -409,7 +383,6 @@ export function TeamDashboard({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Left / Main Auction Area */}
           <div className="lg:col-span-7 space-y-5">
-            {/* Feedback Banner */}
             {feedback && (
               <div
                 role="status"
@@ -432,7 +405,6 @@ export function TeamDashboard({
               </div>
             )}
 
-            {/* Winner / Answer Stage Notification */}
             {isWinner && (
               <div className="rounded-2xl border border-[#B9F36B]/60 bg-[#B9F36B]/10 p-5 space-y-2">
                 <p className="font-display text-lg font-extrabold text-[#B9F36B]">
@@ -452,7 +424,7 @@ export function TeamDashboard({
               </div>
             )}
 
-            {/* Current Auction Item & Timer Card (Never reveals question before host asks!) */}
+            {/* Current Auction Item & Timer Card */}
             <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-5 sm:p-6 space-y-5">
               {currentItem ? (
                 <>
@@ -475,7 +447,7 @@ export function TeamDashboard({
                         <p className="text-xs text-[#9BB0CA]">
                           {currentItem.category}
                           {currentItem.difficulty ? ` · ${currentItem.difficulty}` : ''}
-                          {' · '}Starting {currentItem.startingBid}
+                          {' · '}Start {currentItem.startingBid} coins
                         </p>
                         <h2 className="mt-0.5 font-display text-xl sm:text-2xl font-extrabold text-[#EEF5FF] truncate">
                           {currentItem.itemName}
@@ -483,7 +455,6 @@ export function TeamDashboard({
                       </div>
                     </div>
 
-                    {/* Authoritative Countdown */}
                     <div className="shrink-0 text-right">
                       <p className="text-[11px] font-medium text-[#9BB0CA]">
                         {room.machineState === 'ANSWER_RUNNING'
@@ -562,12 +533,14 @@ export function TeamDashboard({
               )}
             </div>
 
-            {/* Desktop Inline Bidding Panel + Mobile Fixed Bottom Bidding Bar */}
+            {/* Desktop Inline Bidding Panel */}
             <div className="hidden lg:block rounded-2xl border border-[#223552] bg-[#111E31] p-6 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="font-display text-base font-bold text-[#EEF5FF]">Place Your Bid</h3>
+                <h3 className="font-display text-base font-bold text-[#EEF5FF]">
+                  Place Bid (Using Bidding Coins)
+                </h3>
                 <span className="text-xs font-mono tabular-nums text-[#9BB0CA]">
-                  Minimum next bid: {minRequiredBid} coins (increment +{inc})
+                  Min: {minRequiredBid} coins (+{inc}) · Available: {selfTeam.coinBalance}
                 </span>
               </div>
 
@@ -577,12 +550,21 @@ export function TeamDashboard({
                 </p>
               )}
 
+              {isAuctionOpen && insufficientForMinBid && !isHighestBidder && (
+                <p className="text-sm font-semibold text-[#F05252]">
+                  Insufficient Bidding Coins ({selfTeam.coinBalance} coins) to meet the minimum bid
+                  of {minRequiredBid} coins.
+                </p>
+              )}
+
               <div className="flex items-center gap-3">
                 <button
                   type="button"
                   disabled={!isAuctionOpen}
                   onClick={() =>
-                    setBidAmount(String(Math.max(minRequiredBid, Number(bidAmount || minRequiredBid) - inc)))
+                    setBidAmount(
+                      String(Math.max(minRequiredBid, Number(bidAmount || minRequiredBid) - inc)),
+                    )
                   }
                   className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl border border-[#223552] bg-[#172740] text-[#EEF5FF] hover:bg-[#1e3252] disabled:opacity-40"
                   aria-label="Decrease bid"
@@ -592,6 +574,7 @@ export function TeamDashboard({
                 <input
                   type="number"
                   min={minRequiredBid}
+                  max={Math.max(minRequiredBid, selfTeam.coinBalance)}
                   step={1}
                   disabled={!isAuctionOpen}
                   value={bidAmount}
@@ -603,7 +586,9 @@ export function TeamDashboard({
                   type="button"
                   disabled={!isAuctionOpen}
                   onClick={() =>
-                    setBidAmount(String(Math.max(minRequiredBid, Number(bidAmount || minRequiredBid) + inc)))
+                    setBidAmount(
+                      String(Math.max(minRequiredBid, Number(bidAmount || minRequiredBid) + inc)),
+                    )
                   }
                   className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl border border-[#223552] bg-[#172740] text-[#EEF5FF] hover:bg-[#1e3252] disabled:opacity-40"
                   aria-label="Increase bid"
@@ -612,7 +597,12 @@ export function TeamDashboard({
                 </button>
                 <button
                   type="button"
-                  disabled={!isAuctionOpen || isHighestBidder || submittingBid}
+                  disabled={
+                    !isAuctionOpen ||
+                    isHighestBidder ||
+                    submittingBid ||
+                    Number(bidAmount) > selfTeam.coinBalance
+                  }
                   onClick={() => placeBid()}
                   className="min-h-[48px] rounded-xl bg-[#51D6E8] px-7 text-base font-bold text-[#08111F] hover:bg-[#6de0ef] transition-colors disabled:opacity-40 whitespace-nowrap shrink-0"
                 >
@@ -631,27 +621,32 @@ export function TeamDashboard({
                   <button
                     key={preset}
                     type="button"
-                    disabled={!isAuctionOpen || isHighestBidder || submittingBid}
+                    disabled={
+                      !isAuctionOpen ||
+                      isHighestBidder ||
+                      submittingBid ||
+                      preset > selfTeam.coinBalance
+                    }
                     onClick={() => {
                       setBidAmount(String(preset));
-                      placeBid(preset);
+                      void placeBid(preset);
                     }}
                     className="min-h-[40px] rounded-lg border border-[#223552] bg-[#172740] px-3.5 text-xs font-mono font-semibold text-[#EEF5FF] hover:border-[#51D6E8] disabled:opacity-40 transition-colors"
                   >
-                    Quick Bid {preset}
+                    Quick Bid {preset} coins
                   </button>
                 ))}
               </div>
             </div>
           </div>
 
-          {/* Right Column: Live Bids & Leaderboard */}
+          {/* Right Column: Live Bids, Leaderboard & Recent Transactions */}
           <div className="lg:col-span-5 space-y-4">
-            <div className="grid grid-cols-2 gap-1 rounded-xl border border-[#223552] bg-[#111E31] p-1">
+            <div className="grid grid-cols-3 gap-1 rounded-xl border border-[#223552] bg-[#111E31] p-1">
               <button
                 type="button"
                 onClick={() => setActiveTab('bids')}
-                className={`min-h-[40px] rounded-lg text-sm font-semibold transition-colors ${
+                className={`min-h-[40px] rounded-lg text-xs font-semibold transition-colors ${
                   activeTab === 'bids'
                     ? 'bg-[#172740] text-[#51D6E8]'
                     : 'text-[#9BB0CA] hover:text-[#EEF5FF]'
@@ -662,13 +657,24 @@ export function TeamDashboard({
               <button
                 type="button"
                 onClick={() => setActiveTab('leaderboard')}
-                className={`min-h-[40px] rounded-lg text-sm font-semibold transition-colors ${
+                className={`min-h-[40px] rounded-lg text-xs font-semibold transition-colors ${
                   activeTab === 'leaderboard'
                     ? 'bg-[#172740] text-[#51D6E8]'
                     : 'text-[#9BB0CA] hover:text-[#EEF5FF]'
                 }`}
               >
                 Leaderboard
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('transactions')}
+                className={`min-h-[40px] rounded-lg text-xs font-semibold transition-colors ${
+                  activeTab === 'transactions'
+                    ? 'bg-[#172740] text-[#51D6E8]'
+                    : 'text-[#9BB0CA] hover:text-[#EEF5FF]'
+                }`}
+              >
+                Ledger ({snapshot.recentTransactions.length})
               </button>
             </div>
 
@@ -694,23 +700,60 @@ export function TeamDashboard({
                           {b.teamId === selfTeam.id ? ' (You)' : ''}
                         </p>
                         <p className="text-[11px] font-mono text-[#9BB0CA]">
-                          #{b.sequenceNumber} ·{' '}
-                          {new Date(b.serverTimestamp).toLocaleTimeString()}
+                          #{b.sequenceNumber} · {new Date(b.serverTimestamp).toLocaleTimeString()}
                         </p>
                       </div>
                       <span className="font-mono tabular-nums text-base font-bold text-[#51D6E8]">
-                        {b.bidAmount}
+                        {b.bidAmount}c
                       </span>
                     </div>
                   ))
                 )}
               </div>
-            ) : (
+            ) : activeTab === 'leaderboard' ? (
               <LeaderboardTable
                 entries={snapshot.leaderboard}
                 highlightTeamId={selfTeam.id}
                 compact
               />
+            ) : (
+              <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-4 space-y-2 max-h-[420px] overflow-y-auto">
+                {snapshot.recentTransactions.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-[#9BB0CA]">
+                    No Coin or Point transactions yet.
+                  </p>
+                ) : (
+                  snapshot.recentTransactions.map((tx) => (
+                    <div
+                      key={tx.id}
+                      className="rounded-xl border border-[#223552]/80 bg-[#08111F]/80 px-3.5 py-2.5 text-xs flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-semibold text-[#EEF5FF] truncate">{tx.reason}</p>
+                        <p className="text-[11px] font-mono text-[#9BB0CA]">
+                          {tx.currencyType} · {tx.transactionType} ·{' '}
+                          {new Date(tx.timestamp).toLocaleTimeString()}
+                        </p>
+                      </div>
+                      <div className="text-right font-mono tabular-nums shrink-0">
+                        <span
+                          className={`block font-bold ${
+                            tx.actualChange >= 0
+                              ? tx.currencyType === 'COINS'
+                                ? 'text-[#51D6E8]'
+                                : 'text-[#B9F36B]'
+                              : 'text-[#F05252]'
+                          }`}
+                        >
+                          {tx.actualChange >= 0 ? `+${tx.actualChange}` : tx.actualChange}{' '}
+                          {tx.currencyType === 'COINS' ? 'c' : 'pts'}
+                        </span>
+                        <span className="text-[11px] text-[#9BB0CA]">Bal: {tx.newBalance}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -721,7 +764,9 @@ export function TeamDashboard({
         <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 border-t border-[#223552] bg-[#08111F]/95 backdrop-blur-md px-3 py-3">
           <div className="mx-auto max-w-lg space-y-2">
             <div className="flex items-center justify-between text-xs text-[#9BB0CA]">
-              <span className="font-mono tabular-nums">Min: {minRequiredBid} (+{inc})</span>
+              <span className="font-mono tabular-nums">
+                Min: {minRequiredBid}c (+{inc}) · Coins: {selfTeam.coinBalance}
+              </span>
               {isHighestBidder && isAuctionOpen && (
                 <span className="font-semibold text-[#B9F36B]">You lead!</span>
               )}
@@ -731,7 +776,9 @@ export function TeamDashboard({
                 type="button"
                 disabled={!isAuctionOpen}
                 onClick={() =>
-                  setBidAmount(String(Math.max(minRequiredBid, Number(bidAmount || minRequiredBid) - inc)))
+                  setBidAmount(
+                    String(Math.max(minRequiredBid, Number(bidAmount || minRequiredBid) - inc)),
+                  )
                 }
                 className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl border border-[#223552] bg-[#172740] text-[#EEF5FF] disabled:opacity-40"
                 aria-label="Decrease bid"
@@ -752,7 +799,9 @@ export function TeamDashboard({
                 type="button"
                 disabled={!isAuctionOpen}
                 onClick={() =>
-                  setBidAmount(String(Math.max(minRequiredBid, Number(bidAmount || minRequiredBid) + inc)))
+                  setBidAmount(
+                    String(Math.max(minRequiredBid, Number(bidAmount || minRequiredBid) + inc)),
+                  )
                 }
                 className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl border border-[#223552] bg-[#172740] text-[#EEF5FF] disabled:opacity-40"
                 aria-label="Increase bid"
@@ -761,7 +810,12 @@ export function TeamDashboard({
               </button>
               <button
                 type="button"
-                disabled={!isAuctionOpen || isHighestBidder || submittingBid}
+                disabled={
+                  !isAuctionOpen ||
+                  isHighestBidder ||
+                  submittingBid ||
+                  Number(bidAmount) > selfTeam.coinBalance
+                }
                 onClick={() => placeBid()}
                 className="min-h-[48px] flex-1 rounded-xl bg-[#51D6E8] px-4 text-sm font-bold text-[#08111F] active:scale-[0.98] transition-all disabled:opacity-40"
               >

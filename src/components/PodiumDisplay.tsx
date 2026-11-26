@@ -43,10 +43,10 @@ export function PodiumDisplay({ entries, large = false }: PodiumDisplayProps) {
                 large ? 'text-4xl' : 'text-3xl'
               }`}
             >
-              {second.balance} <span className="text-sm font-normal text-[#9BB0CA]">pts</span>
+              {second.points} <span className="text-sm font-normal text-[#9BB0CA]">pts</span>
             </p>
             <p className="mt-2 text-xs text-[#9BB0CA] font-mono tabular-nums">
-              {second.correctCount} correct · {second.wrongCount} wrong ·{' '}
+              {second.coinBalance} coins · {second.correctCount} correct · {second.wrongCount} wrong ·{' '}
               {formatResponseTime(second.totalResponseTimeMs)}
             </p>
           </>
@@ -75,10 +75,10 @@ export function PodiumDisplay({ entries, large = false }: PodiumDisplayProps) {
             large ? 'text-5xl' : 'text-4xl'
           }`}
         >
-          {first.balance} <span className="text-base font-normal text-[#9BB0CA]">pts</span>
+          {first.points} <span className="text-base font-normal text-[#9BB0CA]">pts</span>
         </p>
         <p className="mt-2 text-xs text-[#9BB0CA] font-mono tabular-nums">
-          {first.correctCount} correct · {first.wrongCount} wrong ·{' '}
+          {first.coinBalance} coins · {first.correctCount} correct · {first.wrongCount} wrong ·{' '}
           {formatResponseTime(first.totalResponseTimeMs)}
         </p>
       </div>
@@ -105,10 +105,10 @@ export function PodiumDisplay({ entries, large = false }: PodiumDisplayProps) {
                 large ? 'text-4xl' : 'text-3xl'
               }`}
             >
-              {third.balance} <span className="text-sm font-normal text-[#9BB0CA]">pts</span>
+              {third.points} <span className="text-sm font-normal text-[#9BB0CA]">pts</span>
             </p>
             <p className="mt-2 text-xs text-[#9BB0CA] font-mono tabular-nums">
-              {third.correctCount} correct · {third.wrongCount} wrong ·{' '}
+              {third.coinBalance} coins · {third.correctCount} correct · {third.wrongCount} wrong ·{' '}
               {formatResponseTime(third.totalResponseTimeMs)}
             </p>
           </>

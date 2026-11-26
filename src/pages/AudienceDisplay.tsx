@@ -2,14 +2,17 @@ import { Maximize2, Minimize2, MonitorPlay, Trophy, Users, Wifi, WifiOff } from 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { LeaderboardTable } from '../components/LeaderboardTable.tsx';
 import { PodiumDisplay } from '../components/PodiumDisplay.tsx';
-import { apiRequest, ApiError } from '../lib/api.ts';
-import { getSocket } from '../lib/socket.ts';
+import {
+  fetchPublicRoomByCode,
+  RoomActionError,
+  subscribePublicRoom,
+} from '../lib/firestoreAuction.ts';
 import { useServerCountdown } from '../lib/useServerCountdown.ts';
 import { formatResponseTime, type PublicRoomSnapshot } from '../shared/types.ts';
 
 export function AudienceDisplay() {
   const [roomCodeInput, setRoomCodeInput] = useState('');
-  const [activeCode, setActiveCode] = useState<string | null>(null);
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<PublicRoomSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -23,14 +26,18 @@ export function AudienceDisplay() {
     setLoading(true);
     setError(null);
     try {
-      const snap = await apiRequest<PublicRoomSnapshot>(`/api/public/rooms/${normalized}`);
+      const snap = await fetchPublicRoomByCode(normalized);
       setSnapshot(snap);
-      setActiveCode(normalized);
+      setActiveRoomId(snap.room.id);
       const url = new URL(window.location.href);
       url.searchParams.set('code', normalized);
       window.history.replaceState({}, '', url.toString());
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to load room.');
+      setError(
+        err instanceof RoomActionError || err instanceof Error
+          ? err.message
+          : 'Unable to load room.',
+      );
     } finally {
       setLoading(false);
     }
@@ -38,49 +45,34 @@ export function AudienceDisplay() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
+    const code = params.get('code') || params.get('room');
     if (code) {
       setRoomCodeInput(code.toUpperCase());
-      loadRoom(code);
+      void loadRoom(code);
     }
   }, [loadRoom]);
 
   useEffect(() => {
-    if (!activeCode) return;
-    const socket = getSocket();
-
-    const subscribe = () => {
-      socket.emit('subscribe:public', { roomCode: activeCode }, (res: { ok: boolean }) => {
-        if (res?.ok) setConnected(true);
-      });
-    };
-
-    const onConnect = () => {
-      setConnected(true);
-      subscribe();
-      loadRoom(activeCode);
-    };
-    const onDisconnect = () => setConnected(false);
-    const onRoomState = (next: PublicRoomSnapshot) => {
-      setSnapshot(next);
-    };
-
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('room:state', onRoomState);
-
-    if (socket.connected) {
-      subscribe();
-    } else {
-      socket.connect();
-    }
-
-    return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('room:state', onRoomState);
-    };
-  }, [activeCode, loadRoom]);
+    if (!activeRoomId) return;
+    setConnected(true);
+    const unsub = subscribePublicRoom(
+      activeRoomId,
+      (next) => {
+        if (!next) {
+          setError('Room has been closed by host.');
+          setSnapshot(null);
+          setActiveRoomId(null);
+          return;
+        }
+        setConnected(true);
+        setSnapshot(next);
+      },
+      () => {
+        setConnected(false);
+      },
+    );
+    return () => unsub();
+  }, [activeRoomId]);
 
   useEffect(() => {
     const onFsChange = () => {
@@ -123,7 +115,7 @@ export function AudienceDisplay() {
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    loadRoom(roomCodeInput);
+    void loadRoom(roomCodeInput);
   };
 
   if (!snapshot) {
@@ -248,7 +240,7 @@ export function AudienceDisplay() {
             type="button"
             onClick={() => {
               setSnapshot(null);
-              setActiveCode(null);
+              setActiveRoomId(null);
             }}
             className="min-h-[40px] rounded-xl border border-[#223552] px-3 py-2 text-xs text-[#9BB0CA] hover:text-[#EEF5FF]"
           >
@@ -267,7 +259,7 @@ export function AudienceDisplay() {
                 Final Event Standings
               </h2>
               <p className="text-base text-[#9BB0CA]">
-                Congratulations to our winners! Ranked by total points and response speed.
+                Congratulations to our winners! Ranked by Competition Points and response speed.
               </p>
             </div>
             <PodiumDisplay entries={leaderboard} large />
@@ -317,7 +309,7 @@ export function AudienceDisplay() {
                           <p className="text-sm font-semibold text-[#51D6E8]">
                             {currentItem.category}
                             {currentItem.difficulty ? ` · ${currentItem.difficulty}` : ''}
-                            {' · '}Starting {currentItem.startingBid}
+                            {' · '}Start {currentItem.startingBid} coins
                           </p>
                           <h2 className="mt-1 font-display text-3xl sm:text-4xl font-extrabold text-[#EEF5FF] truncate">
                             {currentItem.itemName}
@@ -356,7 +348,6 @@ export function AudienceDisplay() {
                     </div>
                   )}
 
-                  {/* Big Stage Bid / Winner Banner */}
                   {['WINNER_SELECTED', 'ANSWER_PENDING', 'ANSWER_RUNNING'].includes(
                     room.machineState,
                   ) && currentAnswerSession ? (
@@ -407,7 +398,7 @@ export function AudienceDisplay() {
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-2xl border border-[#223552] bg-[#08111F] p-6">
                       <div>
-                        <p className="text-sm text-[#9BB0CA]">Current Highest Bid</p>
+                        <p className="text-sm text-[#9BB0CA]">Current Highest Bid (Coins)</p>
                         <p className="mt-1 font-mono tabular-nums text-5xl font-extrabold text-[#51D6E8]">
                           {currentAuction?.highestBidderTeamId
                             ? currentAuction.highestBid
@@ -436,7 +427,7 @@ export function AudienceDisplay() {
             <div className="lg:col-span-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="font-display text-xl font-bold text-[#EEF5FF]">Live Standings</h2>
-                <span className="text-xs text-[#9BB0CA]">Points · Response Time</span>
+                <span className="text-xs text-[#9BB0CA]">Points · Coins · Response Time</span>
               </div>
               <LeaderboardTable entries={leaderboard.slice(0, 12)} compact />
             </div>

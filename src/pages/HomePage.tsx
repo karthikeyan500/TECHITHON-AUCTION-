@@ -126,7 +126,8 @@ export function HomePage({ onNavigate }: HomePageProps) {
             </h3>
             <p className="text-sm text-[#9BB0CA] leading-relaxed">
               Every team joins from its own mobile phone using the host&apos;s unique room code and
-              starts with 100 unified points/coins.
+              starts with configurable Bidding Coins (default 100) and Competition Points (default
+              0).
             </p>
           </div>
 
@@ -138,8 +139,8 @@ export function HomePage({ onNavigate }: HomePageProps) {
               02. Real-Time Bidding
             </h3>
             <p className="text-sm text-[#9BB0CA] leading-relaxed">
-              Teams compete simultaneously against a server-synchronized countdown. Atomic transactions
-              decide exact bid priority.
+              Teams bid with Bidding Coins against a synchronized countdown. Only the winning
+              team&apos;s bid is deducted once an auction closes.
             </p>
           </div>
 
@@ -151,8 +152,8 @@ export function HomePage({ onNavigate }: HomePageProps) {
               03. Live Verbal Answer
             </h3>
             <p className="text-sm text-[#9BB0CA] leading-relaxed">
-              The winning team answers the technical question verbally to the host, who judges
-              Correct (+10) or Wrong (-10) in real time.
+              The winning team answers the technical question verbally to the host, who awards
+              Coins &amp; Points on Correct (+10c / +20p) or deducts on Wrong (-10c / -10p).
             </p>
           </div>
 

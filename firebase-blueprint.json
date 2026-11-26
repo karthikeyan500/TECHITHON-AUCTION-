@@ -1,0 +1,365 @@
+{
+  "entities": {
+    "HostProfile": {
+      "title": "HostProfile",
+      "description": "Authenticated host profile stored under /users/{userId} with owner-only PII isolation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "role": { "type": "string", "enum": ["HOST"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "displayName", "role", "createdAt", "updatedAt"]
+    },
+    "QuestionBankItem": {
+      "title": "QuestionBankItem",
+      "description": "Host-private reusable auction prompt stored under /users/{userId}/question_bank/{bankId}. Never stores a correctAnswer.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "hostId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "itemName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "questionTitle": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "questionDescription": { "type": "string", "maxLength": 2000 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "imageOrEmoji": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "difficulty": { "type": "string", "enum": ["", "Easy", "Medium", "Hard", "Expert"] },
+        "startingBid": { "type": "integer" },
+        "auctionDurationOverride": { "type": "integer" },
+        "answerDurationOverride": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "hostId", "itemName", "questionTitle", "questionDescription", "category", "imageOrEmoji", "difficulty", "startingBid", "createdAt"]
+    },
+    "RoomCodeLookup": {
+      "title": "RoomCodeLookup",
+      "description": "Public exact-code lookup mapping /room_codes/{roomCode} to roomId without exposing PII or PIN hashes.",
+      "type": "object",
+      "properties": {
+        "roomCode": { "type": "string", "minLength": 4, "maxLength": 12, "pattern": "^[A-Z0-9]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "hostId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "hasPin": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "machineState": {
+          "type": "string",
+          "enum": ["ROOM_WAITING", "ROOM_READY", "AUCTION_OPEN", "AUCTION_CLOSED", "WINNER_SELECTED", "ANSWER_PENDING", "ANSWER_RUNNING", "ANSWER_EVALUATED", "NEXT_ITEM_PENDING", "ROOM_COMPLETED"]
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomCode", "roomId", "roomName", "hostId", "hasPin", "isActive", "machineState", "createdAt", "updatedAt"]
+    },
+    "Room": {
+      "title": "Room",
+      "description": "Authoritative auction room document under /rooms/{roomId}. Contains configuration and public live state.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomCode": { "type": "string", "minLength": 4, "maxLength": 12, "pattern": "^[A-Z0-9]+$" },
+        "roomName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "hasPin": { "type": "boolean" },
+        "hostId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "hostName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "machineState": {
+          "type": "string",
+          "enum": ["ROOM_WAITING", "ROOM_READY", "AUCTION_OPEN", "AUCTION_CLOSED", "WINNER_SELECTED", "ANSWER_PENDING", "ANSWER_RUNNING", "ANSWER_EVALUATED", "NEXT_ITEM_PENDING", "ROOM_COMPLETED"]
+        },
+        "isPaused": { "type": "boolean" },
+        "pausedFromState": { "type": "string", "maxLength": 40 },
+        "pausedRemainingMs": { "type": "integer" },
+        "isActive": { "type": "boolean" },
+        "settings": { "type": "object" },
+        "currentItemIndex": { "type": "integer" },
+        "currentAuctionId": { "type": "string", "maxLength": 128 },
+        "currentAnswerSessionId": { "type": "string", "maxLength": 128 },
+        "teamCount": { "type": "integer" },
+        "itemCount": { "type": "integer" },
+        "unusedItemCount": { "type": "integer" },
+        "lastAnnouncement": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "roomCode", "roomName", "hasPin", "hostId", "hostName", "machineState", "isPaused", "isActive", "settings", "currentItemIndex", "teamCount", "itemCount", "unusedItemCount", "createdAt", "updatedAt"]
+    },
+    "RoomPrivatePin": {
+      "title": "RoomPrivatePin",
+      "description": "Host-only room PIN hash stored at /rooms/{roomId}/private/pin.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "hostId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "pinHash": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[a-f0-9]+$" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "hostId", "pinHash", "updatedAt"]
+    },
+    "Team": {
+      "title": "Team",
+      "description": "Participant team in /rooms/{roomId}/teams/{teamId} with separate coinBalance and points.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "teamName": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "nameSlug": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9_\\-]+$" },
+        "coinBalance": { "type": "integer" },
+        "points": { "type": "integer" },
+        "correctCount": { "type": "integer" },
+        "wrongCount": { "type": "integer" },
+        "answerSessionsCount": { "type": "integer" },
+        "totalResponseTimeMs": { "type": "integer" },
+        "connectionStatus": { "type": "string", "enum": ["ONLINE", "OFFLINE"] },
+        "participationStatus": { "type": "string", "enum": ["ACTIVE", "REMOVED"] },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "lastSeenAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "roomId", "teamName", "nameSlug", "coinBalance", "points", "correctCount", "wrongCount", "answerSessionsCount", "totalResponseTimeMs", "connectionStatus", "participationStatus", "joinedAt", "lastSeenAt"]
+    },
+    "TeamNameLock": {
+      "title": "TeamNameLock",
+      "description": "Uniqueness lock and reconnect metadata at /rooms/{roomId}/team_names/{nameSlug}.",
+      "type": "object",
+      "properties": {
+        "nameSlug": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9_\\-]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "teamId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "teamName": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "participationStatus": { "type": "string", "enum": ["ACTIVE", "REMOVED"] },
+        "hasTeamPin": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nameSlug", "roomId", "teamId", "teamName", "participationStatus", "hasTeamPin", "createdAt"]
+    },
+    "TeamAuthSecret": {
+      "title": "TeamAuthSecret",
+      "description": "Secret passcode/reconnect token hashes at /rooms/{roomId}/team_auth/{teamId}. Readable only by host, verified via get() in security rules.",
+      "type": "object",
+      "properties": {
+        "teamId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "joinedPinHash": { "type": "string", "maxLength": 64 },
+        "teamPinHash": { "type": "string", "maxLength": 64 },
+        "reconnectTokenHash": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[a-f0-9]+$" },
+        "authVerifier": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[a-f0-9]+$" },
+        "lastPingAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["teamId", "roomId", "joinedPinHash", "teamPinHash", "reconnectTokenHash", "authVerifier", "lastPingAt", "createdAt"]
+    },
+    "AuctionItemPublic": {
+      "title": "AuctionItemPublic",
+      "description": "Public auction item catalog metadata at /rooms/{roomId}/items/{itemId}. Excludes host question prompts.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "sortOrder": { "type": "integer" },
+        "itemName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "imageOrEmoji": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "difficulty": { "type": "string", "enum": ["", "Easy", "Medium", "Hard", "Expert"] },
+        "startingBid": { "type": "integer" },
+        "auctionDurationOverride": { "type": "integer" },
+        "answerDurationOverride": { "type": "integer" },
+        "status": { "type": "string", "enum": ["PENDING", "COMPLETED", "SKIPPED"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "roomId", "sortOrder", "itemName", "category", "imageOrEmoji", "difficulty", "startingBid", "status", "createdAt"]
+    },
+    "HostPrompt": {
+      "title": "HostPrompt",
+      "description": "Host-only verbal question prompt at /rooms/{roomId}/host_prompts/{itemId}. Never readable by teams or audience.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "hostId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "questionTitle": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "questionDescription": { "type": "string", "maxLength": 2000 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "roomId", "hostId", "questionTitle", "questionDescription", "updatedAt"]
+    },
+    "AuctionRound": {
+      "title": "AuctionRound",
+      "description": "Live or completed auction state at /rooms/{roomId}/auctions/{auctionId}.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "itemId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "startingBid": { "type": "integer" },
+        "auctionStatus": { "type": "string", "enum": ["OPEN", "CLOSED", "WINNER_SELECTED", "NO_BIDS", "COMPLETED", "SKIPPED"] },
+        "startTimestamp": { "type": "integer" },
+        "deadlineTimestamp": { "type": "integer" },
+        "deadlineAt": { "type": "string", "format": "date-time" },
+        "closedTimestamp": { "type": "integer" },
+        "highestBid": { "type": "integer" },
+        "highestBidderTeamId": { "type": "string", "maxLength": 128 },
+        "highestBidderTeamName": { "type": "string", "maxLength": 40 },
+        "sequenceCounter": { "type": "integer" },
+        "bidDeducted": { "type": "boolean" },
+        "deductedAmount": { "type": "integer" },
+        "bidRefunded": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "roomId", "itemId", "startingBid", "auctionStatus", "startTimestamp", "deadlineTimestamp", "deadlineAt", "highestBid", "sequenceCounter", "bidDeducted", "deductedAmount", "bidRefunded", "updatedAt"]
+    },
+    "BidRecord": {
+      "title": "BidRecord",
+      "description": "Immutable accepted bid record under /rooms/{roomId}/bids/{bidId}.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "auctionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "teamId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "teamName": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "bidAmount": { "type": "integer" },
+        "sequenceNumber": { "type": "integer" },
+        "status": { "type": "string", "enum": ["ACCEPTED"] },
+        "serverTimestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "auctionId", "roomId", "teamId", "teamName", "bidAmount", "sequenceNumber", "status", "serverTimestamp"]
+    },
+    "AnswerSession": {
+      "title": "AnswerSession",
+      "description": "Live verbal answer session under /rooms/{roomId}/answer_sessions/{sessionId}.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "auctionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "itemId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "winningTeamId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "winningTeamName": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "answerStartTimestamp": { "type": "integer" },
+        "answerDeadlineTimestamp": { "type": "integer" },
+        "answerDecisionTimestamp": { "type": "integer" },
+        "responseTimeMs": { "type": "integer" },
+        "hostDecision": { "type": "string", "enum": ["PENDING", "CORRECT", "WRONG", "SKIPPED"] }
+      },
+      "required": ["id", "auctionId", "roomId", "itemId", "winningTeamId", "winningTeamName", "hostDecision"]
+    },
+    "EconomyTransaction": {
+      "title": "EconomyTransaction",
+      "description": "Immutable coin or point balance ledger entry at /rooms/{roomId}/transactions/{txId}.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "teamId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "teamName": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "currencyType": { "type": "string", "enum": ["COINS", "POINTS"] },
+        "transactionType": { "type": "string", "enum": ["BID_DEDUCTION", "CORRECT_REWARD", "WRONG_PENALTY", "PARTICIPATION_REWARD", "MANUAL_ADJUSTMENT", "REFUND"] },
+        "previousBalance": { "type": "integer" },
+        "configuredChange": { "type": "integer" },
+        "actualChange": { "type": "integer" },
+        "newBalance": { "type": "integer" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "itemId": { "type": "string", "maxLength": 128 },
+        "itemName": { "type": "string", "maxLength": 120 },
+        "auctionId": { "type": "string", "maxLength": 128 },
+        "hostId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "roomId", "teamId", "teamName", "currencyType", "transactionType", "previousBalance", "configuredChange", "actualChange", "newBalance", "reason", "hostId", "timestamp"]
+    },
+    "AuctionHistoryEntry": {
+      "title": "AuctionHistoryEntry",
+      "description": "Completed auction round record at /rooms/{roomId}/history/{historyId}.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "roomName": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "itemId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "itemName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "questionTitle": { "type": "string", "maxLength": 300 },
+        "auctionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "winningTeamId": { "type": "string", "maxLength": 128 },
+        "winningTeamName": { "type": "string", "maxLength": 40 },
+        "finalBid": { "type": "integer" },
+        "winningBidDeducted": { "type": "integer" },
+        "auctionStartTimestamp": { "type": "integer" },
+        "auctionEndTimestamp": { "type": "integer" },
+        "answerStartTimestamp": { "type": "integer" },
+        "hostDecision": { "type": "string", "enum": ["PENDING", "CORRECT", "WRONG", "SKIPPED", "NO_BIDS"] },
+        "responseTimeMs": { "type": "integer" },
+        "coinsChange": { "type": "integer" },
+        "pointsChange": { "type": "integer" },
+        "finalCoinBalance": { "type": "integer" },
+        "finalPoints": { "type": "integer" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "roomId", "roomName", "itemId", "itemName", "questionTitle", "auctionId", "finalBid", "winningBidDeducted", "auctionStartTimestamp", "hostDecision", "coinsChange", "pointsChange", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/HostProfile" },
+      "description": "Authenticated host profile with PII strictly restricted to the owning user."
+    },
+    "/users/{userId}/question_bank/{bankId}": {
+      "schema": { "$ref": "#/entities/QuestionBankItem" },
+      "description": "Reusable verbal question bank owned by the host."
+    },
+    "/room_codes/{roomCode}": {
+      "schema": { "$ref": "#/entities/RoomCodeLookup" },
+      "description": "Exact room-code to roomId public lookup directory."
+    },
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Authoritative auction room document."
+    },
+    "/rooms/{roomId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/RoomPrivatePin" },
+      "description": "Host-only private secrets (room PIN hash)."
+    },
+    "/rooms/{roomId}/teams/{teamId}": {
+      "schema": { "$ref": "#/entities/Team" },
+      "description": "Joined teams in the room with separate coinBalance and points."
+    },
+    "/rooms/{roomId}/team_names/{nameSlug}": {
+      "schema": { "$ref": "#/entities/TeamNameLock" },
+      "description": "Unique case-insensitive team name lock per room."
+    },
+    "/rooms/{roomId}/team_auth/{teamId}": {
+      "schema": { "$ref": "#/entities/TeamAuthSecret" },
+      "description": "Team reconnect passcode and token hashes (host-readable only, verified in rules)."
+    },
+    "/rooms/{roomId}/items/{itemId}": {
+      "schema": { "$ref": "#/entities/AuctionItemPublic" },
+      "description": "Auction items catalog metadata for the room."
+    },
+    "/rooms/{roomId}/host_prompts/{itemId}": {
+      "schema": { "$ref": "#/entities/HostPrompt" },
+      "description": "Host-only verbal question title and prompt notes."
+    },
+    "/rooms/{roomId}/auctions/{auctionId}": {
+      "schema": { "$ref": "#/entities/AuctionRound" },
+      "description": "Live auction round state and highest bid tracker."
+    },
+    "/rooms/{roomId}/bids/{bidId}": {
+      "schema": { "$ref": "#/entities/BidRecord" },
+      "description": "Immutable accepted bid log for auctions in the room."
+    },
+    "/rooms/{roomId}/answer_sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/AnswerSession" },
+      "description": "Verbal answer evaluation sessions."
+    },
+    "/rooms/{roomId}/transactions/{txId}": {
+      "schema": { "$ref": "#/entities/EconomyTransaction" },
+      "description": "Immutable coin and point ledger transactions."
+    },
+    "/rooms/{roomId}/history/{historyId}": {
+      "schema": { "$ref": "#/entities/AuctionHistoryEntry" },
+      "description": "Host audit history of completed auction items."
+    }
+  }
+}

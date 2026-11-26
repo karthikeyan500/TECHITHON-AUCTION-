@@ -1,6 +1,11 @@
+import { onAuthStateChanged } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { Navbar, type AppRoute } from './components/Navbar.tsx';
-import { apiRequest, setHostToken, setTeamToken } from './lib/api.ts';
+import { auth } from './lib/firebase.ts';
+import {
+  ensureHostProfileDoc,
+  reconnectStoredTeamSession,
+} from './lib/firestoreAuction.ts';
 import { AboutPage } from './pages/AboutPage.tsx';
 import { AudienceDisplay } from './pages/AudienceDisplay.tsx';
 import { HomePage } from './pages/HomePage.tsx';
@@ -32,7 +37,19 @@ function normalizePath(pathname: string): AppRoute {
 }
 
 export default function App() {
-  const [route, setRoute] = useState<AppRoute>(() => normalizePath(window.location.pathname));
+  const [route, setRoute] = useState<AppRoute>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initialPath = normalizePath(window.location.pathname);
+    if (initialPath === '/' && (params.get('room') || params.get('code'))) {
+      const roomCode = (params.get('code') || params.get('room') || '').trim().toUpperCase();
+      if (roomCode) {
+        window.history.replaceState({}, '', `/join?code=${encodeURIComponent(roomCode)}`);
+        return '/join';
+      }
+    }
+    return initialPath;
+  });
+
   const [hostUser, setHostUser] = useState<HostUser | null>(null);
   const [teamSnapshot, setTeamSnapshot] = useState<TeamRoomSnapshot | null>(null);
   const [hydrating, setHydrating] = useState(true);
@@ -45,29 +62,57 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // Hydrate existing authenticated Host and/or Team sessions from server cookies on load/refresh
+  // Hydrate Firebase Host Auth + stored public Team session cleanly on load/refresh
   useEffect(() => {
     let active = true;
-    Promise.allSettled([
-      apiRequest<{ host: HostUser | null; token?: string }>('/api/auth/me'),
-      apiRequest<{ snapshot: TeamRoomSnapshot; token: string }>('/api/team/me'),
-    ])
-      .then(([hostRes, teamRes]) => {
-        if (!active) return;
-        if (hostRes.status === 'fulfilled' && hostRes.value.host) {
-          setHostUser(hostRes.value.host);
-          if (hostRes.value.token) setHostToken(hostRes.value.token);
-        }
-        if (teamRes.status === 'fulfilled' && teamRes.value.snapshot) {
-          setTeamSnapshot(teamRes.value.snapshot);
-          if (teamRes.value.token) setTeamToken(teamRes.value.token);
+    let authSettled = false;
+    let teamSettled = false;
+
+    const finishIfReady = () => {
+      if (active && authSettled && teamSettled) {
+        setHydrating(false);
+      }
+    };
+
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      if (!active) return;
+      if (user && user.emailVerified) {
+        const host: HostUser = {
+          id: user.uid,
+          username: user.email || user.uid,
+          displayName: user.displayName || user.email?.split('@')[0] || 'Event Host',
+          email: user.email || undefined,
+          role: 'HOST',
+          createdAt: Date.now(),
+        };
+        setHostUser(host);
+        ensureHostProfileDoc(host).catch((err) => {
+          console.error('Failed to sync host profile:', err);
+        });
+      } else {
+        setHostUser(null);
+      }
+      authSettled = true;
+      finishIfReady();
+    });
+
+    reconnectStoredTeamSession()
+      .then((snap) => {
+        if (active && snap) {
+          setTeamSnapshot(snap);
         }
       })
+      .catch(() => {
+        // No active team session
+      })
       .finally(() => {
-        if (active) setHydrating(false);
+        teamSettled = true;
+        finishIfReady();
       });
+
     return () => {
       active = false;
+      unsubAuth();
     };
   }, []);
 
@@ -86,7 +131,7 @@ export default function App() {
 
       {hydrating ? (
         <div className="flex-1 flex items-center justify-center p-10 text-sm text-[#9BB0CA]">
-          Restoring session...
+          Connecting to cloud workspace...
         </div>
       ) : (
         <div className="flex-1">
@@ -97,8 +142,7 @@ export default function App() {
           {route === '/join' && (
             <JoinRoomPage
               existingTeamSnapshot={teamSnapshot}
-              onJoined={(snap, token) => {
-                setTeamToken(token);
+              onJoined={(snap) => {
                 setTeamSnapshot(snap);
                 navigate('/team');
               }}
@@ -120,11 +164,9 @@ export default function App() {
           {(route === '/host' || route === '/create-room') && (
             <HostDashboard
               hostUser={hostUser}
-              initialSection={route === '/create-room' ? 'create-room' : 'overview'}
-              onAuthenticated={(host, token) => {
-                setHostToken(token);
-                setHostUser(host);
-              }}
+              currentRoute={route}
+              onNavigate={navigate}
+              onAuthenticated={(host) => setHostUser(host)}
               onLoggedOut={() => {
                 setHostUser(null);
                 navigate('/');
