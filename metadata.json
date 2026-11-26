@@ -2,5 +2,7 @@
   "name": "TECH AUCTION 2026",
   "description": "Real-time multiplayer technology auction competition platform for live technical events — Think. Bid. Conquer.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
