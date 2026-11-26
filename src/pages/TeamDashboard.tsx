@@ -22,7 +22,7 @@ import {
   subscribeTeamRoom,
 } from '../lib/firestoreAuction.ts';
 import { useServerCountdown } from '../lib/useServerCountdown.ts';
-import type { TeamRoomSnapshot } from '../shared/types.ts';
+import { isRenderableImageSrc, type TeamRoomSnapshot } from '../shared/types.ts';
 
 interface TeamDashboardProps {
   initialSnapshot: TeamRoomSnapshot | null;
@@ -206,8 +206,15 @@ export function TeamDashboard({
     );
   }
 
-  const { room, selfTeam, currentItem, currentAuction, currentAnswerSession, leaderboard } =
-    snapshot;
+  const {
+    room,
+    selfTeam,
+    currentItem,
+    currentAuction,
+    currentAnswerSession,
+    leaderboard,
+    teamStats,
+  } = snapshot;
   const isAuctionOpen =
     room.machineState === 'AUCTION_OPEN' &&
     !room.isPaused &&
@@ -220,6 +227,8 @@ export function TeamDashboard({
   const inc = Math.max(1, room.settings.minBidIncrement);
   const insufficientForMinBid = selfTeam.coinBalance < minRequiredBid;
   const myRank = leaderboard.find((e) => e.teamId === selfTeam.id)?.rank ?? null;
+  const displayItemNumber = Math.min(room.currentItemIndex + 1, Math.max(1, room.itemCount));
+  const hasItemPhoto = isRenderableImageSrc(currentItem?.imageOrEmoji);
 
   const placeBid = async (targetAmount?: number) => {
     const numeric = Math.trunc(Number(targetAmount ?? bidAmount));
@@ -238,7 +247,7 @@ export function TeamDashboard({
     if (numeric > selfTeam.coinBalance) {
       setFeedback({
         type: 'error',
-        text: `Insufficient Bidding Coins (${selfTeam.coinBalance} coins available).`,
+        text: `Insufficient Virtual Coins (${selfTeam.coinBalance} coins available).`,
       });
       return;
     }
@@ -297,7 +306,7 @@ export function TeamDashboard({
         </div>
       )}
 
-      {/* Top Identity & Separate Coins / Points Strip */}
+      {/* Top Team Identity Strip */}
       <section className="rounded-2xl border border-[#223552] bg-[#111E31] p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
@@ -325,42 +334,106 @@ export function TeamDashboard({
             </h1>
             <p className="mt-0.5 text-xs font-medium text-[#9BB0CA]">
               Status: <span className="text-[#EEF5FF]">{room.humanStatus}</span>
-              {myRank !== null ? ` · Current Rank #${myRank}` : ''}
+              {myRank !== null ? ` · Leaderboard Rank #${myRank}` : ''}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Separate Bidding Coins Card */}
-            <div className="rounded-xl border border-[#51D6E8]/40 bg-[#08111F] px-4 py-2.5 text-right min-w-[126px]">
-              <p className="text-[11px] font-semibold text-[#51D6E8] flex items-center justify-end gap-1">
-                <Coins className="h-3.5 w-3.5" />
-                BIDDING COINS
-              </p>
-              <p className="font-mono tabular-nums text-2xl font-extrabold text-[#51D6E8]">
+          <button
+            type="button"
+            onClick={() => setLeaveConfirmOpen(true)}
+            className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#223552] bg-[#172740] px-3.5 text-xs font-semibold text-[#9BB0CA] hover:text-[#F05252] transition-colors"
+            aria-label="Leave room"
+            title="Leave room"
+          >
+            <LogOut className="h-4 w-4" />
+            <span className="hidden sm:inline">Leave</span>
+          </button>
+        </div>
+      </section>
+
+      {/* Feature 7: Dedicated VIRTUAL COINS & COMPETITION POINTS Sections */}
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* VIRTUAL COINS */}
+        <div className="rounded-2xl border border-[#51D6E8]/40 bg-[#111E31] p-4 sm:p-5 space-y-3">
+          <div className="flex items-center justify-between gap-2 border-b border-[#223552] pb-2.5">
+            <div>
+              <h2 className="font-display text-sm font-extrabold tracking-wide text-[#51D6E8] flex items-center gap-1.5">
+                <Coins className="h-4 w-4" />
+                VIRTUAL COINS
+              </h2>
+              <p className="text-[11px] text-[#9BB0CA]">Used exclusively for auction bidding</p>
+            </div>
+            <span className="font-mono tabular-nums text-2xl font-extrabold text-[#51D6E8]">
+              {selfTeam.coinBalance}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+            <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
+              <p className="text-[11px] text-[#9BB0CA]">Available</p>
+              <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#51D6E8]">
                 {selfTeam.coinBalance}
               </p>
             </div>
-
-            {/* Separate Competition Points Card */}
-            <div className="rounded-xl border border-[#B9F36B]/40 bg-[#08111F] px-4 py-2.5 text-right min-w-[126px]">
-              <p className="text-[11px] font-semibold text-[#B9F36B] flex items-center justify-end gap-1">
-                <Trophy className="h-3.5 w-3.5" />
-                COMP. POINTS
+            <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
+              <p className="text-[11px] text-[#9BB0CA]">Spent on Bids</p>
+              <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#EEF5FF]">
+                {teamStats.coinsSpentOnBids}
               </p>
-              <p className="font-mono tabular-nums text-2xl font-extrabold text-[#B9F36B]">
+            </div>
+            <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
+              <p className="text-[11px] text-[#9BB0CA]">Earned (Correct)</p>
+              <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#B9F36B]">
+                +{teamStats.coinsEarnedCorrect}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
+              <p className="text-[11px] text-[#9BB0CA]">Lost (Wrong)</p>
+              <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#F05252]">
+                -{teamStats.coinsLostWrong}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* COMPETITION POINTS */}
+        <div className="rounded-2xl border border-[#B9F36B]/40 bg-[#111E31] p-4 sm:p-5 space-y-3">
+          <div className="flex items-center justify-between gap-2 border-b border-[#223552] pb-2.5">
+            <div>
+              <h2 className="font-display text-sm font-extrabold tracking-wide text-[#B9F36B] flex items-center gap-1.5">
+                <Trophy className="h-4 w-4" />
+                COMPETITION POINTS
+              </h2>
+              <p className="text-[11px] text-[#9BB0CA]">Determines leaderboard rankings</p>
+            </div>
+            <span className="font-mono tabular-nums text-2xl font-extrabold text-[#B9F36B]">
+              {selfTeam.points}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+            <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
+              <p className="text-[11px] text-[#9BB0CA]">Current Points</p>
+              <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#B9F36B]">
                 {selfTeam.points}
               </p>
             </div>
-
-            <button
-              type="button"
-              onClick={() => setLeaveConfirmOpen(true)}
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-[#223552] bg-[#172740] text-[#9BB0CA] hover:text-[#F05252] transition-colors"
-              aria-label="Leave room"
-              title="Leave room"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+            <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
+              <p className="text-[11px] text-[#9BB0CA]">Earned (Correct)</p>
+              <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#B9F36B]">
+                +{teamStats.pointsEarnedCorrect}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
+              <p className="text-[11px] text-[#9BB0CA]">Lost (Wrong)</p>
+              <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#F05252]">
+                -{teamStats.pointsLostWrong}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[#223552] bg-[#08111F] p-2.5">
+              <p className="text-[11px] text-[#9BB0CA]">Leaderboard Pos.</p>
+              <p className="mt-0.5 font-mono tabular-nums text-base font-bold text-[#F5B731]">
+                {myRank !== null ? `#${myRank}` : '—'}
+              </p>
+            </div>
           </div>
         </div>
       </section>
@@ -411,7 +484,7 @@ export function TeamDashboard({
                   Your team has won the auction!
                 </p>
                 <p className="text-sm text-[#EEF5FF]">
-                  Listen closely to the host&apos;s question and answer verbally.
+                  Listen closely to the host and give your answer verbally.
                   {room.machineState === 'ANSWER_RUNNING'
                     ? ' Answer timer is running now.'
                     : ' Waiting for the host to start the answer timer or evaluate your answer.'}
@@ -429,30 +502,14 @@ export function TeamDashboard({
               {currentItem ? (
                 <>
                   <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-center gap-3.5 min-w-0">
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#172740] border border-[#223552] text-3xl">
-                        {currentItem.imageOrEmoji.startsWith('http') ||
-                        currentItem.imageOrEmoji.startsWith('/') ? (
-                          <img
-                            src={currentItem.imageOrEmoji}
-                            alt={currentItem.itemName}
-                            referrerPolicy="no-referrer"
-                            className="h-full w-full rounded-2xl object-cover"
-                          />
-                        ) : (
-                          <span>{currentItem.imageOrEmoji || '💻'}</span>
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs text-[#9BB0CA]">
-                          {currentItem.category}
-                          {currentItem.difficulty ? ` · ${currentItem.difficulty}` : ''}
-                          {' · '}Start {currentItem.startingBid} coins
-                        </p>
-                        <h2 className="mt-0.5 font-display text-xl sm:text-2xl font-extrabold text-[#EEF5FF] truncate">
-                          {currentItem.itemName}
-                        </h2>
-                      </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-[#51D6E8]">
+                        Item #{displayItemNumber} of {room.itemCount} · {currentItem.category}
+                        {' · '}Start {currentItem.startingBid} coins
+                      </p>
+                      <h2 className="mt-0.5 font-display text-xl sm:text-2xl font-extrabold text-[#EEF5FF]">
+                        {currentItem.itemName}
+                      </h2>
                     </div>
 
                     <div className="shrink-0 text-right">
@@ -483,6 +540,27 @@ export function TeamDashboard({
                               : '—'}
                       </p>
                     </div>
+                  </div>
+
+                  {/* Crisp Uploaded Item Photograph Preview */}
+                  <div className="aspect-video max-h-[220px] w-full rounded-xl border border-[#223552] bg-[#08111F] overflow-hidden flex items-center justify-center">
+                    {hasItemPhoto ? (
+                      <img
+                        src={currentItem.imageOrEmoji}
+                        alt={currentItem.itemName}
+                        referrerPolicy="no-referrer"
+                        className="h-full w-full object-contain"
+                      />
+                    ) : (
+                      <div className="text-center space-y-1 p-4">
+                        <span className="block text-5xl">
+                          {currentItem.imageOrEmoji || '💻'}
+                        </span>
+                        <span className="block text-xs text-[#9BB0CA]">
+                          Item #{displayItemNumber} · {currentItem.itemName}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Highest Bid Readout */}

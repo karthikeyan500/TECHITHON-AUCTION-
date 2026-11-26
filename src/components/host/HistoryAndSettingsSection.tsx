@@ -41,7 +41,6 @@ export function AuctionHistorySection({ snapshot }: HistorySectionProps) {
       if (!q) return true;
       return (
         h.itemName.toLowerCase().includes(q) ||
-        h.questionTitle.toLowerCase().includes(q) ||
         (h.winningTeamName || '').toLowerCase().includes(q)
       );
     });
@@ -102,7 +101,7 @@ export function AuctionHistorySection({ snapshot }: HistorySectionProps) {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by item, question, or team..."
+                placeholder="Search by item or team..."
                 className="w-full min-h-[40px] rounded-xl border border-[#223552] bg-[#111E31] pl-9 pr-3 text-xs text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
               />
             </div>
@@ -125,7 +124,7 @@ export function AuctionHistorySection({ snapshot }: HistorySectionProps) {
             <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-[#223552] text-[#9BB0CA]">
-                  <th className="py-3 pl-4 pr-3">Item &amp; Question</th>
+                  <th className="py-3 pl-4 pr-3">Auction Item</th>
                   <th className="py-3 px-3">Winner</th>
                   <th className="py-3 px-3 text-right">Final Bid</th>
                   <th className="py-3 px-3">Decision</th>
@@ -147,9 +146,6 @@ export function AuctionHistorySection({ snapshot }: HistorySectionProps) {
                     <tr key={h.id} className="hover:bg-[#172740]/50">
                       <td className="py-3 pl-4 pr-3">
                         <p className="font-semibold text-[#EEF5FF]">{h.itemName}</p>
-                        <p className="text-[11px] text-[#9BB0CA] truncate max-w-[260px]">
-                          {h.questionTitle}
-                        </p>
                       </td>
                       <td className="py-3 px-3 text-[#EEF5FF]">
                         {h.winningTeamName || 'No Bids'}
@@ -654,11 +650,11 @@ export function RoomSettingsAndAdjustSection({
             <Sliders className="h-5 w-5 text-[#51D6E8]" />
             <div>
               <h3 className="font-display text-lg font-bold text-[#EEF5FF]">
-                Room &amp; Economy Configuration
+                COIN &amp; POINT REWARD SETTINGS
               </h3>
               <p className="text-xs text-[#9BB0CA]">
-                Changes to scoring and coin settings apply from the next evaluation only—existing
-                transactions are never recalculated.
+                Can be updated anytime, including during an ongoing auction. Changes apply to future
+                evaluations and newly joined teams only—past transactions are never recalculated.
               </p>
             </div>
           </div>
@@ -749,7 +745,7 @@ export function RoomSettingsAndAdjustSection({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <StepperControl
-                label="Starting Coins (New Teams)"
+                label="Starting Virtual Coins (New Teams)"
                 value={settings.startingCoins}
                 min={0}
                 max={100000}

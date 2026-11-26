@@ -8,7 +8,11 @@ import {
   subscribePublicRoom,
 } from '../lib/firestoreAuction.ts';
 import { useServerCountdown } from '../lib/useServerCountdown.ts';
-import { formatResponseTime, type PublicRoomSnapshot } from '../shared/types.ts';
+import {
+  formatResponseTime,
+  isRenderableImageSrc,
+  type PublicRoomSnapshot,
+} from '../shared/types.ts';
 
 export function AudienceDisplay() {
   const [roomCodeInput, setRoomCodeInput] = useState('');
@@ -178,6 +182,11 @@ export function AudienceDisplay() {
   }
 
   const { room, currentItem, currentAuction, currentAnswerSession, leaderboard } = snapshot;
+  const displayItemNumber = Math.min(room.currentItemIndex + 1, Math.max(1, room.itemCount));
+  const hasItemPhoto = isRenderableImageSrc(currentItem?.imageOrEmoji);
+  const evaluatedEntry = currentAnswerSession
+    ? leaderboard.find((e) => e.teamId === currentAnswerSession.winningTeamId) ?? null
+    : null;
 
   return (
     <div
@@ -288,83 +297,90 @@ export function AudienceDisplay() {
                   </p>
                 </div>
               ) : (
-                <div className="rounded-3xl border border-[#223552] bg-[#111E31] p-7 sm:p-10 space-y-8">
+                <div className="rounded-3xl border border-[#223552] bg-[#111E31] p-7 sm:p-9 space-y-6">
                   {currentItem && (
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                      <div className="flex items-center gap-5 min-w-0">
-                        <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-[#223552] bg-[#172740] text-5xl">
-                          {currentItem.imageOrEmoji.startsWith('http') ||
-                          currentItem.imageOrEmoji.startsWith('/') ? (
-                            <img
-                              src={currentItem.imageOrEmoji}
-                              alt={currentItem.itemName}
-                              referrerPolicy="no-referrer"
-                              className="h-full w-full rounded-2xl object-cover"
-                            />
-                          ) : (
-                            <span>{currentItem.imageOrEmoji || '💻'}</span>
-                          )}
-                        </div>
-                        <div className="min-w-0">
+                    <>
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold text-[#51D6E8]">
-                            {currentItem.category}
-                            {currentItem.difficulty ? ` · ${currentItem.difficulty}` : ''}
+                            Item #{displayItemNumber} of {room.itemCount} · {currentItem.category}
                             {' · '}Start {currentItem.startingBid} coins
                           </p>
-                          <h2 className="mt-1 font-display text-3xl sm:text-4xl font-extrabold text-[#EEF5FF] truncate">
+                          <h2 className="mt-1 font-display text-3xl sm:text-4xl font-extrabold text-[#EEF5FF]">
                             {currentItem.itemName}
                           </h2>
                         </div>
+
+                        <div className="text-left sm:text-right shrink-0">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-[#9BB0CA]">
+                            {room.machineState === 'ANSWER_RUNNING'
+                              ? 'Answer Countdown'
+                              : 'Auction Countdown'}
+                          </p>
+                          <p
+                            className={`font-mono tabular-nums text-5xl sm:text-6xl font-extrabold ${
+                              room.isPaused
+                                ? 'text-[#F5B731]'
+                                : room.machineState === 'AUCTION_OPEN' && auctionRemainingMs <= 5000
+                                  ? 'text-[#F05252]'
+                                  : room.machineState === 'AUCTION_OPEN'
+                                    ? 'text-[#51D6E8]'
+                                    : room.machineState === 'ANSWER_RUNNING'
+                                      ? 'text-[#F5B731]'
+                                      : 'text-[#9BB0CA]'
+                            }`}
+                          >
+                            {room.machineState === 'AUCTION_OPEN'
+                              ? `${(auctionRemainingMs / 1000).toFixed(1)}s`
+                              : room.machineState === 'ANSWER_RUNNING'
+                                ? `${(answerRemainingMs / 1000).toFixed(1)}s`
+                                : room.isPaused
+                                  ? 'PAUSED'
+                                  : '—'}
+                          </p>
+                        </div>
                       </div>
 
-                      <div className="text-left sm:text-right shrink-0">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-[#9BB0CA]">
-                          {room.machineState === 'ANSWER_RUNNING'
-                            ? 'Answer Countdown'
-                            : 'Auction Countdown'}
-                        </p>
-                        <p
-                          className={`font-mono tabular-nums text-5xl sm:text-6xl font-extrabold ${
-                            room.isPaused
-                              ? 'text-[#F5B731]'
-                              : room.machineState === 'AUCTION_OPEN' && auctionRemainingMs <= 5000
-                                ? 'text-[#F05252]'
-                                : room.machineState === 'AUCTION_OPEN'
-                                  ? 'text-[#51D6E8]'
-                                  : room.machineState === 'ANSWER_RUNNING'
-                                    ? 'text-[#F5B731]'
-                                    : 'text-[#9BB0CA]'
-                          }`}
-                        >
-                          {room.machineState === 'AUCTION_OPEN'
-                            ? `${(auctionRemainingMs / 1000).toFixed(1)}s`
-                            : room.machineState === 'ANSWER_RUNNING'
-                              ? `${(answerRemainingMs / 1000).toFixed(1)}s`
-                              : room.isPaused
-                                ? 'PAUSED'
-                                : '—'}
-                        </p>
+                      {/* Crisp Uploaded Item Photograph Spotlight */}
+                      <div className="aspect-video max-h-[300px] w-full rounded-2xl border border-[#223552] bg-[#08111F] overflow-hidden flex items-center justify-center">
+                        {hasItemPhoto ? (
+                          <img
+                            src={currentItem.imageOrEmoji}
+                            alt={currentItem.itemName}
+                            referrerPolicy="no-referrer"
+                            className="h-full w-full object-contain"
+                          />
+                        ) : (
+                          <div className="text-center space-y-2 p-6">
+                            <span className="block text-7xl">
+                              {currentItem.imageOrEmoji || '💻'}
+                            </span>
+                            <span className="block text-sm text-[#9BB0CA]">
+                              Item #{displayItemNumber} · {currentItem.itemName}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                    </div>
+                    </>
                   )}
 
                   {['WINNER_SELECTED', 'ANSWER_PENDING', 'ANSWER_RUNNING'].includes(
                     room.machineState,
                   ) && currentAnswerSession ? (
-                    <div className="rounded-2xl border border-[#B9F36B]/50 bg-[#B9F36B]/10 p-6 sm:p-8 text-center space-y-2">
+                    <div className="rounded-2xl border border-[#B9F36B]/50 bg-[#B9F36B]/10 p-6 sm:p-7 text-center space-y-2">
                       <p className="text-sm font-bold uppercase tracking-wider text-[#B9F36B]">
-                        Auction Winner · Answering Live
+                        Auction Winner · Evaluating Response
                       </p>
                       <p className="font-display text-4xl sm:text-5xl font-extrabold text-[#EEF5FF]">
                         {currentAnswerSession.winningTeamName}
                       </p>
                       <p className="font-mono tabular-nums text-2xl font-bold text-[#51D6E8]">
-                        Final Bid: {currentAuction?.highestBid || 0} coins
+                        Winning Bid: {currentAuction?.highestBid || 0} coins
                       </p>
                     </div>
                   ) : room.machineState === 'ANSWER_EVALUATED' && currentAnswerSession ? (
                     <div
-                      className={`rounded-2xl border p-6 sm:p-8 text-center space-y-2 ${
+                      className={`rounded-2xl border p-6 sm:p-7 text-center space-y-4 ${
                         currentAnswerSession.hostDecision === 'CORRECT'
                           ? 'border-[#B9F36B]/50 bg-[#B9F36B]/10'
                           : currentAnswerSession.hostDecision === 'WRONG'
@@ -372,27 +388,46 @@ export function AudienceDisplay() {
                             : 'border-[#223552] bg-[#172740]'
                       }`}
                     >
-                      <p className="text-sm font-bold uppercase tracking-wider text-[#9BB0CA]">
-                        Host Decision
-                      </p>
-                      <p className="font-display text-4xl font-extrabold text-[#EEF5FF]">
-                        {currentAnswerSession.winningTeamName} —{' '}
-                        <span
-                          className={
-                            currentAnswerSession.hostDecision === 'CORRECT'
-                              ? 'text-[#B9F36B]'
-                              : currentAnswerSession.hostDecision === 'WRONG'
-                                ? 'text-[#F05252]'
-                                : 'text-[#9BB0CA]'
-                          }
-                        >
-                          {currentAnswerSession.hostDecision}
-                        </span>
-                      </p>
-                      {currentAnswerSession.responseTimeMs !== null && (
-                        <p className="font-mono tabular-nums text-lg text-[#9BB0CA]">
-                          Response Time: {formatResponseTime(currentAnswerSession.responseTimeMs)}
+                      <div className="space-y-1.5">
+                        <p className="text-sm font-bold uppercase tracking-wider text-[#9BB0CA]">
+                          Evaluation Complete
                         </p>
+                        <p className="font-display text-4xl font-extrabold text-[#EEF5FF]">
+                          {currentAnswerSession.winningTeamName} —{' '}
+                          <span
+                            className={
+                              currentAnswerSession.hostDecision === 'CORRECT'
+                                ? 'text-[#B9F36B]'
+                                : currentAnswerSession.hostDecision === 'WRONG'
+                                  ? 'text-[#F05252]'
+                                  : 'text-[#9BB0CA]'
+                            }
+                          >
+                            {currentAnswerSession.hostDecision}
+                          </span>
+                        </p>
+                        {currentAnswerSession.responseTimeMs !== null && (
+                          <p className="font-mono tabular-nums text-base text-[#9BB0CA]">
+                            Response Time: {formatResponseTime(currentAnswerSession.responseTimeMs)}
+                          </p>
+                        )}
+                      </div>
+
+                      {evaluatedEntry && (
+                        <div className="grid grid-cols-2 gap-4 rounded-xl border border-[#223552] bg-[#08111F]/90 p-4 text-left">
+                          <div>
+                            <p className="text-xs text-[#9BB0CA]">Updated Virtual Coins</p>
+                            <p className="font-mono tabular-nums text-2xl font-extrabold text-[#51D6E8]">
+                              {evaluatedEntry.coinBalance} coins
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-[#9BB0CA]">Updated Competition Points</p>
+                            <p className="font-mono tabular-nums text-2xl font-extrabold text-[#B9F36B]">
+                              {evaluatedEntry.points} pts
+                            </p>
+                          </div>
+                        </div>
                       )}
                     </div>
                   ) : (

@@ -5,7 +5,9 @@ import {
   Download,
   Edit3,
   Eye,
+  ImagePlus,
   Plus,
+  RefreshCw,
   Search,
   Shuffle,
   Trash2,
@@ -24,7 +26,12 @@ import {
   RoomActionError,
   updateCustomItem,
 } from '../../lib/firestoreAuction.ts';
-import type { AuctionItem, DifficultyLevel, HostRoomSnapshot } from '../../shared/types.ts';
+import { compressUploadedImage } from '../../lib/imageUpload.ts';
+import {
+  isRenderableImageSrc,
+  type AuctionItem,
+  type HostRoomSnapshot,
+} from '../../shared/types.ts';
 import { ConfirmDialog } from '../ConfirmDialog.tsx';
 
 interface CustomItemsSectionProps {
@@ -36,19 +43,17 @@ const EMOJI_PRESETS = ['💻', '🧠', '⚡', '🛰️', '🔐', '🗄️', '�
 export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
   const { room, items } = snapshot;
 
-  // Add / Edit form state — strictly NO correct-answer field anywhere
+  // Add / Edit form state — Item Name, Item Image, and Item Number (questions asked verbally by host)
   const [editingId, setEditingId] = useState<string | null>(null);
   const [itemName, setItemName] = useState('');
-  const [questionTitle, setQuestionTitle] = useState('');
-  const [questionDescription, setQuestionDescription] = useState('');
-  const [category, setCategory] = useState('Algorithms & Systems');
+  const [category, setCategory] = useState('Tech Auction');
   const [imageOrEmoji, setImageOrEmoji] = useState('💻');
-  const [difficulty, setDifficulty] = useState<DifficultyLevel | ''>('Medium');
   const [startingBid, setStartingBid] = useState<number>(room.settings.minStartingBid);
   const [auctionOverride, setAuctionOverride] = useState<string>('');
   const [answerOverride, setAnswerOverride] = useState<string>('');
   const [saveToBank, setSaveToBank] = useState(true);
 
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
   const [csvText, setCsvText] = useState('');
@@ -59,14 +64,17 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const editingItemNumber = useMemo(() => {
+    if (!editingId) return items.length + 1;
+    const idx = items.findIndex((i) => i.id === editingId);
+    return idx >= 0 ? idx + 1 : items.length + 1;
+  }, [editingId, items]);
+
   const resetForm = () => {
     setEditingId(null);
     setItemName('');
-    setQuestionTitle('');
-    setQuestionDescription('');
-    setCategory('Algorithms & Systems');
+    setCategory('Tech Auction');
     setImageOrEmoji('💻');
-    setDifficulty('Medium');
     setStartingBid(room.settings.minStartingBid);
     setAuctionOverride('');
     setAnswerOverride('');
@@ -85,26 +93,44 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
       if (!q) return true;
       return (
         item.itemName.toLowerCase().includes(q) ||
-        item.questionTitle.toLowerCase().includes(q) ||
-        item.questionDescription.toLowerCase().includes(q) ||
         item.category.toLowerCase().includes(q)
       );
     });
   }, [items, searchQuery, categoryFilter]);
 
+  const handleImageUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setMessage(null);
+    setUploadingImage(true);
+    try {
+      const compressed = await compressUploadedImage(file);
+      setImageOrEmoji(compressed);
+    } catch (err) {
+      setMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Unable to upload image.',
+      });
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   const handleSaveItem = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy) return;
+    if (busy || uploadingImage) return;
     setMessage(null);
     setBusy(true);
     try {
+      const cleanName = itemName.trim();
       const payload = {
-        itemName,
-        questionTitle,
-        questionDescription,
+        itemName: cleanName,
+        questionTitle: cleanName,
+        questionDescription: '',
         category,
         imageOrEmoji,
-        difficulty,
+        difficulty: '' as const,
         startingBid,
         auctionDurationOverride: auctionOverride ? Number(auctionOverride) : null,
         answerDurationOverride: answerOverride ? Number(answerOverride) : null,
@@ -119,7 +145,9 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
 
       setMessage({
         type: 'success',
-        text: editingId ? 'Item updated.' : 'Custom auction item added.',
+        text: editingId
+          ? `Item #${editingItemNumber} updated.`
+          : `Item #${editingItemNumber} saved to room.`,
       });
       resetForm();
     } catch (err) {
@@ -138,11 +166,8 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
   const startEditing = (item: AuctionItem) => {
     setEditingId(item.id);
     setItemName(item.itemName);
-    setQuestionTitle(item.questionTitle);
-    setQuestionDescription(item.questionDescription);
     setCategory(item.category);
     setImageOrEmoji(item.imageOrEmoji);
-    setDifficulty(item.difficulty);
     setStartingBid(item.startingBid);
     setAuctionOverride(item.auctionDurationOverride ? String(item.auctionDurationOverride) : '');
     setAnswerOverride(item.answerDurationOverride ? String(item.answerDurationOverride) : '');
@@ -194,7 +219,7 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
     setMessage(null);
     try {
       await randomizePendingItems(room.id, items);
-      setMessage({ type: 'success', text: 'Pending question order randomized.' });
+      setMessage({ type: 'success', text: 'Pending item order randomized.' });
     } catch (err) {
       setMessage({
         type: 'error',
@@ -233,18 +258,20 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
     }
   };
 
+  const hasUploadedPhoto = isRenderableImageSrc(imageOrEmoji);
+
   return (
     <div className="space-y-6">
       {/* Pre-Start Readiness Summary */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-xl border border-[#223552] bg-[#111E31] p-4">
-          <p className="text-xs text-[#9BB0CA]">Total Questions</p>
+          <p className="text-xs text-[#9BB0CA]">Total Items</p>
           <p className="mt-1 font-mono tabular-nums text-2xl font-bold text-[#EEF5FF]">
             {items.length}
           </p>
         </div>
         <div className="rounded-xl border border-[#223552] bg-[#111E31] p-4">
-          <p className="text-xs text-[#9BB0CA]">Unused Questions</p>
+          <p className="text-xs text-[#9BB0CA]">Remaining Items</p>
           <p className="mt-1 font-mono tabular-nums text-2xl font-bold text-[#51D6E8]">
             {room.unusedItemCount}
           </p>
@@ -264,19 +291,24 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
         </div>
       </div>
 
-      {/* Add / Edit Item Form (Strictly NO Correct Answer Field) */}
+      {/* Add / Edit Item Form (Item Number, Item Name, Item Image Upload) */}
       <form
         onSubmit={handleSaveItem}
         className="rounded-2xl border border-[#223552] bg-[#111E31] p-6 space-y-5"
       >
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#223552] pb-4">
           <div>
-            <h2 className="font-display text-xl font-bold text-[#EEF5FF]">
-              {editingId ? 'Edit Auction Item' : 'Add Custom Auction Item'}
-            </h2>
-            <p className="text-xs text-[#9BB0CA]">
-              Teams bid on the Item Name. You will ask the Question verbally and judge answers live
-              (no answer key is stored).
+            <div className="flex items-center gap-2.5">
+              <span className="rounded-lg border border-[#51D6E8]/40 bg-[#08111F] px-2.5 py-0.5 font-mono text-xs font-bold text-[#51D6E8]">
+                Item #{editingItemNumber}
+              </span>
+              <h2 className="font-display text-xl font-bold text-[#EEF5FF]">
+                {editingId ? 'Edit Auction Item' : 'Add Auction Item'}
+              </h2>
+            </div>
+            <p className="mt-1 text-xs text-[#9BB0CA]">
+              Enter the Item Name and upload a photograph for live display. Questions and answers
+              are handled verbally by the host during the event.
             </p>
           </div>
 
@@ -300,229 +332,224 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label
-              htmlFor="item-name"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Item Name (visible to bidders)
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          {/* Item Image Upload & Live Preview (5 cols) */}
+          <div className="lg:col-span-5 space-y-3">
+            <label className="block text-xs font-semibold text-[#9BB0CA]">
+              Item Image (Photograph Upload &amp; Preview)
             </label>
-            <input
-              id="item-name"
-              type="text"
-              required
-              value={itemName}
-              onChange={(e) => setItemName(e.target.value)}
-              placeholder="e.g. RISC-V Pipeline Core"
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
+            <div className="rounded-2xl border border-[#223552] bg-[#08111F] p-4 space-y-3">
+              <div className="aspect-video w-full rounded-xl border border-[#223552] bg-[#111E31] overflow-hidden flex items-center justify-center">
+                {hasUploadedPhoto ? (
+                  <img
+                    src={imageOrEmoji}
+                    alt={itemName || `Item #${editingItemNumber}`}
+                    className="h-full w-full object-contain"
+                  />
+                ) : (
+                  <div className="text-center space-y-1 p-4">
+                    <span className="block text-5xl">{imageOrEmoji || '💻'}</span>
+                    <p className="text-xs text-[#9BB0CA]">
+                      Upload a photo of the item to show on stage &amp; team screens
+                    </p>
+                  </div>
+                )}
+              </div>
 
-          <div>
-            <label
-              htmlFor="item-category"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Category
-            </label>
-            <input
-              id="item-category"
-              type="text"
-              required
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              placeholder="e.g. Computer Architecture"
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="min-h-[40px] flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-[#172740] border border-[#51D6E8]/40 px-4 text-xs font-bold text-[#51D6E8] hover:bg-[#1e3252] cursor-pointer">
+                  {hasUploadedPhoto ? (
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  ) : (
+                    <ImagePlus className="h-3.5 w-3.5" />
+                  )}
+                  {uploadingImage
+                    ? 'Compressing...'
+                    : hasUploadedPhoto
+                      ? 'Replace Image'
+                      : 'Upload Item Image'}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    onChange={(e) => void handleImageUpload(e)}
+                    className="hidden"
+                  />
+                </label>
 
-          <div className="md:col-span-2">
-            <label
-              htmlFor="item-q-title"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Question Title (host-only, asked verbally)
-            </label>
-            <input
-              id="item-q-title"
-              type="text"
-              required
-              value={questionTitle}
-              onChange={(e) => setQuestionTitle(e.target.value)}
-              placeholder="e.g. Explain how data hazards are resolved with forwarding."
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
+                {hasUploadedPhoto && (
+                  <button
+                    type="button"
+                    onClick={() => setImageOrEmoji('💻')}
+                    className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-[#F05252]/40 bg-[#F05252]/10 px-3 text-xs font-semibold text-[#F05252] hover:bg-[#F05252]/20"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Remove
+                  </button>
+                )}
+              </div>
 
-          <div className="md:col-span-2">
-            <label
-              htmlFor="item-q-desc"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Question Description / Host Prompt Notes
-            </label>
-            <textarea
-              id="item-q-desc"
-              rows={2}
-              value={questionDescription}
-              onChange={(e) => setQuestionDescription(e.target.value)}
-              placeholder="Optional detailed prompt or judging criteria notes for the host..."
-              className="w-full rounded-xl border border-[#223552] bg-[#08111F] p-3.5 text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <div>
-            <label
-              htmlFor="item-emoji"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Emoji or Image URL
-            </label>
-            <input
-              id="item-emoji"
-              type="text"
-              value={imageOrEmoji}
-              onChange={(e) => setImageOrEmoji(e.target.value)}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-            <div className="mt-1.5 flex flex-wrap gap-1">
-              {EMOJI_PRESETS.map((em) => (
-                <button
-                  key={em}
-                  type="button"
-                  onClick={() => setImageOrEmoji(em)}
-                  className="rounded px-1.5 py-0.5 text-sm hover:bg-[#172740]"
-                >
-                  {em}
-                </button>
-              ))}
+              {!hasUploadedPhoto && (
+                <div className="pt-1 flex flex-wrap items-center gap-1">
+                  <span className="text-[11px] text-[#9BB0CA] mr-1">Fallback icon:</span>
+                  {EMOJI_PRESETS.map((em) => (
+                    <button
+                      key={em}
+                      type="button"
+                      onClick={() => setImageOrEmoji(em)}
+                      className={`rounded px-1.5 py-0.5 text-sm hover:bg-[#172740] ${
+                        imageOrEmoji === em ? 'bg-[#172740] ring-1 ring-[#51D6E8]' : ''
+                      }`}
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          <div>
-            <label
-              htmlFor="item-diff"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Difficulty
-            </label>
-            <select
-              id="item-diff"
-              value={difficulty}
-              onChange={(e) => setDifficulty(e.target.value as DifficultyLevel | '')}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3 text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            >
-              <option value="">Unspecified</option>
-              <option value="Easy">Easy</option>
-              <option value="Medium">Medium</option>
-              <option value="Hard">Hard</option>
-              <option value="Expert">Expert</option>
-            </select>
+          {/* Item Details (7 cols) */}
+          <div className="lg:col-span-7 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <label
+                  htmlFor="item-name"
+                  className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
+                >
+                  Item Name (Item #{editingItemNumber})
+                </label>
+                <input
+                  id="item-name"
+                  type="text"
+                  required
+                  maxLength={120}
+                  value={itemName}
+                  onChange={(e) => setItemName(e.target.value)}
+                  placeholder="e.g. RISC-V Pipeline Core"
+                  className="w-full min-h-[46px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 text-sm font-medium text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="item-category"
+                  className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
+                >
+                  Category
+                </label>
+                <input
+                  id="item-category"
+                  type="text"
+                  required
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder="e.g. Hardware & Systems"
+                  className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="item-start-bid"
+                  className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
+                >
+                  Starting Bid (Virtual Coins)
+                </label>
+                <input
+                  id="item-start-bid"
+                  type="number"
+                  min={1}
+                  required
+                  value={startingBid}
+                  onChange={(e) => setStartingBid(Number(e.target.value))}
+                  className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#51D6E8] focus:border-[#51D6E8] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="item-auc-ovr"
+                  className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
+                >
+                  Auction Timer Override (sec, optional)
+                </label>
+                <input
+                  id="item-auc-ovr"
+                  type="number"
+                  min={5}
+                  max={600}
+                  value={auctionOverride}
+                  onChange={(e) => setAuctionOverride(e.target.value)}
+                  placeholder={`${room.settings.auctionDurationSec}s`}
+                  className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="item-ans-ovr"
+                  className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
+                >
+                  Answer Timer Override (sec, optional)
+                </label>
+                <input
+                  id="item-ans-ovr"
+                  type="number"
+                  min={5}
+                  max={300}
+                  value={answerOverride}
+                  onChange={(e) => setAnswerOverride(e.target.value)}
+                  placeholder={`${room.settings.answerDurationSec}s`}
+                  className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {!editingId && (
+              <label className="inline-flex items-center gap-2 text-xs text-[#9BB0CA] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={saveToBank}
+                  onChange={(e) => setSaveToBank(e.target.checked)}
+                  className="h-4 w-4 accent-[#51D6E8]"
+                />
+                Also save item to my reusable catalog
+              </label>
+            )}
+
+            {message && (
+              <div
+                role="status"
+                className={`rounded-xl border px-4 py-2.5 text-sm ${
+                  message.type === 'success'
+                    ? 'border-[#B9F36B]/40 bg-[#B9F36B]/10 text-[#B9F36B]'
+                    : 'border-[#F05252]/40 bg-[#F05252]/10 text-[#F05252]'
+                }`}
+              >
+                {message.text}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <button
+                type="submit"
+                disabled={busy || uploadingImage}
+                className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-[#51D6E8] px-5 text-sm font-bold text-[#08111F] hover:bg-[#6de0ef] transition-colors disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4" />
+                {editingId ? `Save Item #${editingItemNumber}` : `Add Item #${editingItemNumber}`}
+              </button>
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="min-h-[44px] rounded-xl border border-[#223552] px-4 text-sm text-[#9BB0CA] hover:text-[#EEF5FF]"
+                >
+                  Cancel Edit
+                </button>
+              )}
+            </div>
           </div>
-
-          <div>
-            <label
-              htmlFor="item-start-bid"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Starting Bid (Coins)
-            </label>
-            <input
-              id="item-start-bid"
-              type="number"
-              min={1}
-              required
-              value={startingBid}
-              onChange={(e) => setStartingBid(Number(e.target.value))}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="item-auc-ovr"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Auction Sec (optional)
-            </label>
-            <input
-              id="item-auc-ovr"
-              type="number"
-              min={5}
-              max={600}
-              value={auctionOverride}
-              onChange={(e) => setAuctionOverride(e.target.value)}
-              placeholder={`${room.settings.auctionDurationSec}s`}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="item-ans-ovr"
-              className="block text-xs font-semibold text-[#9BB0CA] mb-1.5"
-            >
-              Answer Sec (optional)
-            </label>
-            <input
-              id="item-ans-ovr"
-              type="number"
-              min={5}
-              max={300}
-              value={answerOverride}
-              onChange={(e) => setAnswerOverride(e.target.value)}
-              placeholder={`${room.settings.answerDurationSec}s`}
-              className="w-full min-h-[44px] rounded-xl border border-[#223552] bg-[#08111F] px-3.5 font-mono text-sm text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
-            />
-          </div>
-        </div>
-
-        {!editingId && (
-          <label className="inline-flex items-center gap-2 text-xs text-[#9BB0CA] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={saveToBank}
-              onChange={(e) => setSaveToBank(e.target.checked)}
-              className="h-4 w-4 accent-[#51D6E8]"
-            />
-            Also save to my reusable Question Bank
-          </label>
-        )}
-
-        {message && (
-          <div
-            role="status"
-            className={`rounded-xl border px-4 py-2.5 text-sm ${
-              message.type === 'success'
-                ? 'border-[#B9F36B]/40 bg-[#B9F36B]/10 text-[#B9F36B]'
-                : 'border-[#F05252]/40 bg-[#F05252]/10 text-[#F05252]'
-            }`}
-          >
-            {message.text}
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="submit"
-            disabled={busy}
-            className="min-h-[44px] inline-flex items-center gap-2 rounded-xl bg-[#51D6E8] px-5 text-sm font-bold text-[#08111F] hover:bg-[#6de0ef] transition-colors disabled:opacity-50"
-          >
-            <Plus className="h-4 w-4" />
-            {editingId ? 'Save Changes' : 'Add Auction Item'}
-          </button>
-          {editingId && (
-            <button
-              type="button"
-              onClick={resetForm}
-              className="min-h-[44px] rounded-xl border border-[#223552] px-4 text-sm text-[#9BB0CA] hover:text-[#EEF5FF]"
-            >
-              Cancel Edit
-            </button>
-          )}
         </div>
       </form>
 
@@ -571,32 +598,38 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
 
         {filteredItems.length === 0 ? (
           <p className="py-8 text-center text-sm text-[#9BB0CA]">
-            No items match your search. Add a custom auction item above or import from CSV.
+            No items match your search. Add an auction item with a name and photo above.
           </p>
         ) : (
           <div className="divide-y divide-[#223552]">
             {filteredItems.map((item) => {
               const globalIdx = items.findIndex((x) => x.id === item.id);
+              const isImg = isRenderableImageSrc(item.imageOrEmoji);
               return (
                 <div
                   key={item.id}
                   className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                 >
-                  <div className="flex items-start gap-3 min-w-0">
-                    <span className="font-mono text-xs font-bold text-[#9BB0CA] mt-1 w-6 shrink-0">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <span className="font-mono text-xs font-bold text-[#51D6E8] w-7 shrink-0">
                       #{globalIdx + 1}
                     </span>
-                    <span className="text-2xl shrink-0">
-                      {item.imageOrEmoji.startsWith('http') || item.imageOrEmoji.startsWith('/')
-                        ? '🖼️'
-                        : item.imageOrEmoji}
-                    </span>
+                    <div className="h-14 w-16 shrink-0 rounded-xl border border-[#223552] bg-[#08111F] overflow-hidden flex items-center justify-center">
+                      {isImg ? (
+                        <img
+                          src={item.imageOrEmoji}
+                          alt={item.itemName}
+                          referrerPolicy="no-referrer"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-2xl">{item.imageOrEmoji || '💻'}</span>
+                      )}
+                    </div>
                     <div className="min-w-0">
                       <p className="font-semibold text-[#EEF5FF] truncate">{item.itemName}</p>
-                      <p className="text-xs text-[#9BB0CA] truncate">{item.questionTitle}</p>
                       <p className="mt-0.5 text-[11px] text-[#9BB0CA]">
                         {item.category}
-                        {item.difficulty ? ` · ${item.difficulty}` : ''}
                         {' · '}Start {item.startingBid} coins ·{' '}
                         <span
                           className={
@@ -681,14 +714,13 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
         >
           <div className="w-full max-w-lg rounded-2xl border border-[#223552] bg-[#111E31] p-6 space-y-4">
             <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <span className="text-3xl">{previewItem.imageOrEmoji}</span>
-                <div>
-                  <p className="text-xs text-[#51D6E8]">{previewItem.category}</p>
-                  <h3 className="font-display text-xl font-bold text-[#EEF5FF]">
-                    {previewItem.itemName}
-                  </h3>
-                </div>
+              <div>
+                <p className="text-xs font-mono text-[#51D6E8]">
+                  Item #{items.findIndex((i) => i.id === previewItem.id) + 1} · {previewItem.category}
+                </p>
+                <h3 className="font-display text-xl font-bold text-[#EEF5FF]">
+                  {previewItem.itemName}
+                </h3>
               </div>
               <button
                 type="button"
@@ -698,16 +730,20 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="rounded-xl border border-[#223552] bg-[#08111F] p-4 space-y-2">
-              <p className="text-xs font-semibold text-[#9BB0CA]">Host Verbal Question</p>
-              <p className="text-base font-semibold text-[#EEF5FF]">{previewItem.questionTitle}</p>
-              {previewItem.questionDescription && (
-                <p className="text-sm text-[#9BB0CA]">{previewItem.questionDescription}</p>
+            <div className="aspect-video w-full rounded-xl border border-[#223552] bg-[#08111F] overflow-hidden flex items-center justify-center">
+              {isRenderableImageSrc(previewItem.imageOrEmoji) ? (
+                <img
+                  src={previewItem.imageOrEmoji}
+                  alt={previewItem.itemName}
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <span className="text-6xl">{previewItem.imageOrEmoji || '💻'}</span>
               )}
             </div>
             <p className="text-xs text-[#9BB0CA] font-mono">
-              Starting Bid: {previewItem.startingBid} coins · Difficulty:{' '}
-              {previewItem.difficulty || 'Standard'}
+              Starting Bid: {previewItem.startingBid} Virtual Coins
             </p>
           </div>
         </div>
@@ -734,8 +770,7 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
               </button>
             </div>
             <p className="text-xs text-[#9BB0CA]">
-              Columns: itemName, questionTitle, questionDescription, category, imageOrEmoji,
-              difficulty, startingBid (no correct-answer column).
+              Columns: itemName, category, imageOrEmoji, startingBid
             </p>
             <input
               type="file"
@@ -747,7 +782,7 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
               rows={6}
               value={csvText}
               onChange={(e) => setCsvText(e.target.value)}
-              placeholder={`itemName,questionTitle,questionDescription,category,imageOrEmoji,difficulty,startingBid\nKubernetes Pod,"What is the primary role of kube-proxy?","Explain ClusterIP vs NodePort.",Cloud & DevOps,☸️,Medium,15`}
+              placeholder={`itemName,category,imageOrEmoji,startingBid\nKubernetes Cluster Hardware,Cloud & DevOps,☸️,15`}
               className="w-full rounded-xl border border-[#223552] bg-[#08111F] p-3 font-mono text-xs text-[#EEF5FF] focus:border-[#51D6E8] focus:outline-none"
             />
             <div className="flex justify-end gap-2">
@@ -784,3 +819,4 @@ export function CustomItemsSection({ snapshot }: CustomItemsSectionProps) {
     </div>
   );
 }
+

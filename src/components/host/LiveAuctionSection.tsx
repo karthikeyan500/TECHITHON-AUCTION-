@@ -25,7 +25,7 @@ import {
   startAuction,
 } from '../../lib/firestoreAuction.ts';
 import { useServerCountdown } from '../../lib/useServerCountdown.ts';
-import { formatResponseTime, type HostRoomSnapshot } from '../../shared/types.ts';
+import { isRenderableImageSrc, formatResponseTime, type HostRoomSnapshot } from '../../shared/types.ts';
 import { ConfirmDialog } from '../ConfirmDialog.tsx';
 
 interface LiveAuctionSectionProps {
@@ -39,6 +39,7 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
   const [error, setError] = useState<string | null>(null);
   const [confirmRefundOpen, setConfirmRefundOpen] = useState(false);
   const autoClosedAuctionRef = useRef<string | null>(null);
+  const actionLockRef = useRef(false);
 
   const auctionRemainingMs = useServerCountdown(
     room.machineState === 'AUCTION_OPEN' ? currentAuction?.deadlineTimestamp : null,
@@ -78,7 +79,8 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
   }, [room.id, room.machineState, room.isPaused, currentAuction, auctionRemainingMs]);
 
   const runAction = async (fn: () => Promise<unknown>) => {
-    if (busy) return;
+    if (actionLockRef.current || busy) return;
+    actionLockRef.current = true;
     setError(null);
     setBusy(true);
     try {
@@ -88,6 +90,7 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
         err instanceof RoomActionError || err instanceof Error ? err.message : 'Action failed.',
       );
     } finally {
+      actionLockRef.current = false;
       setBusy(false);
     }
   };
@@ -104,6 +107,29 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
     Boolean(currentAuction?.bidDeducted) &&
     !currentAuction?.bidRefunded &&
     (isWinnerStage || room.machineState === 'AUCTION_CLOSED');
+
+  const currentItemIdx = currentHostItem
+    ? snapshot.items.findIndex((i) => i.id === currentHostItem.id)
+    : -1;
+  const displayItemNumber =
+    currentItemIdx >= 0
+      ? currentItemIdx + 1
+      : Math.min(room.currentItemIndex + 1, Math.max(1, room.itemCount));
+
+  const winningTeam = currentAnswerSession
+    ? snapshot.teams.find((t) => t.id === currentAnswerSession.winningTeamId) ?? null
+    : null;
+
+  const currCoins = winningTeam?.coinBalance ?? 0;
+  const currPts = winningTeam?.points ?? 0;
+  const correctNewCoins = currCoins + room.settings.correctCoinReward;
+  const correctNewPts = currPts + room.settings.correctPointReward;
+  const wrongNewCoins = Math.max(0, currCoins - room.settings.wrongCoinPenalty);
+  const wrongNewPts = room.settings.allowNegativePoints
+    ? currPts - room.settings.wrongPointPenalty
+    : Math.max(0, currPts - room.settings.wrongPointPenalty);
+
+  const hasItemPhoto = isRenderableImageSrc(currentHostItem?.imageOrEmoji);
 
   return (
     <div className="space-y-6">
@@ -137,35 +163,25 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Control Panel (7 cols) */}
           <div className="lg:col-span-7 space-y-5">
-            {/* Current Item & Host-Only Question Card */}
+            {/* Current Item & Photograph Display */}
             <div className="rounded-2xl border border-[#223552] bg-[#111E31] p-6 space-y-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-[#51D6E8]">
-                    {room.humanStatus} · Item{' '}
-                    {Math.min(room.currentItemIndex + 1, Math.max(1, room.itemCount))} of{' '}
-                    {room.itemCount}
+                    {room.humanStatus} · Item #{displayItemNumber} of {room.itemCount}
                   </p>
                   <h2 className="mt-1 font-display text-2xl font-extrabold text-[#EEF5FF]">
-                    {currentHostItem ? (
-                      <>
-                        <span className="mr-2">{currentHostItem.imageOrEmoji}</span>
-                        {currentHostItem.itemName}
-                      </>
-                    ) : (
-                      'No Auction Item Selected'
-                    )}
+                    {currentHostItem ? currentHostItem.itemName : 'No Auction Item Selected'}
                   </h2>
                   {currentHostItem && (
                     <p className="mt-1 text-xs text-[#9BB0CA]">
                       {currentHostItem.category}
-                      {currentHostItem.difficulty ? ` · ${currentHostItem.difficulty}` : ''}
                       {' · '}Starting Bid {currentHostItem.startingBid} coins
                     </p>
                   )}
                 </div>
 
-                <div className="text-right">
+                <div className="text-right shrink-0">
                   <p className="text-xs text-[#9BB0CA]">
                     {room.machineState === 'ANSWER_RUNNING' ? 'Answer Timer' : 'Auction Timer'}
                   </p>
@@ -191,17 +207,25 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
                 </div>
               </div>
 
-              {/* Host-Only Question Prompt */}
+              {/* Crisp Auction Item Photograph Display */}
               {currentHostItem && (
-                <div className="rounded-xl border border-[#223552] bg-[#08111F] p-4 space-y-1.5">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-[#F5B731]">
-                    Host-Only Question (Read Verbally to Winning Team)
-                  </p>
-                  <p className="text-base font-bold text-[#EEF5FF]">
-                    {currentHostItem.questionTitle}
-                  </p>
-                  {currentHostItem.questionDescription && (
-                    <p className="text-sm text-[#9BB0CA]">{currentHostItem.questionDescription}</p>
+                <div className="aspect-video max-h-[260px] w-full rounded-xl border border-[#223552] bg-[#08111F] overflow-hidden flex items-center justify-center">
+                  {hasItemPhoto ? (
+                    <img
+                      src={currentHostItem.imageOrEmoji}
+                      alt={currentHostItem.itemName}
+                      referrerPolicy="no-referrer"
+                      className="h-full w-full object-contain"
+                    />
+                  ) : (
+                    <div className="text-center space-y-1 p-4">
+                      <span className="block text-6xl">
+                        {currentHostItem.imageOrEmoji || '💻'}
+                      </span>
+                      <span className="block text-xs text-[#9BB0CA]">
+                        Item #{displayItemNumber} · {currentHostItem.itemName}
+                      </span>
+                    </div>
                   )}
                 </div>
               )}
@@ -304,23 +328,43 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
               </div>
             </div>
 
-            {/* Answer Evaluation Panel */}
+            {/* Host Answer Evaluation Panel (Feature 5) */}
             {isWinnerStage && currentAnswerSession && (
               <div className="rounded-2xl border border-[#B9F36B]/50 bg-[#172740] p-6 space-y-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-[#B9F36B]">
-                      Winning Team Selected
-                    </p>
-                    <h3 className="mt-0.5 font-display text-2xl font-extrabold text-[#EEF5FF]">
-                      {currentAnswerSession.winningTeamName}
-                    </h3>
-                    <p className="text-xs text-[#9BB0CA] font-mono">
-                      Final Bid: {currentAuction?.highestBid || 0} coins
-                      {currentAuction?.bidDeducted
-                        ? ` (${currentAuction.deductedAmount} coins deducted)`
-                        : ' (Bid not deducted)'}
-                    </p>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {currentHostItem && (
+                      <div className="h-14 w-16 shrink-0 rounded-xl border border-[#223552] bg-[#08111F] overflow-hidden flex items-center justify-center">
+                        {hasItemPhoto ? (
+                          <img
+                            src={currentHostItem.imageOrEmoji}
+                            alt={currentHostItem.itemName}
+                            referrerPolicy="no-referrer"
+                            className="h-full w-full object-contain"
+                          />
+                        ) : (
+                          <span className="text-2xl">{currentHostItem.imageOrEmoji || '💻'}</span>
+                        )}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-[#B9F36B]">
+                        Host Answer Evaluation · Item #{displayItemNumber}
+                      </p>
+                      <h3 className="mt-0.5 font-display text-2xl font-extrabold text-[#EEF5FF] truncate">
+                        {currentAnswerSession.winningTeamName}
+                      </h3>
+                      <p className="text-xs text-[#9BB0CA]">
+                        Item: <span className="font-semibold text-[#EEF5FF]">{currentHostItem?.itemName}</span>
+                        {' · '}
+                        <span className="font-mono">
+                          Winning Bid: {currentAuction?.highestBid || 0} coins
+                          {currentAuction?.bidDeducted
+                            ? ` (${currentAuction.deductedAmount} coins deducted)`
+                            : ' (not deducted)'}
+                        </span>
+                      </p>
+                    </div>
                   </div>
 
                   {room.machineState !== 'ANSWER_RUNNING' && (
@@ -345,6 +389,26 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
                   )}
                 </div>
 
+                {/* Winning Team's Current Coin & Points Balances */}
+                <div className="grid grid-cols-2 gap-3 rounded-xl border border-[#223552] bg-[#08111F] p-4">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#51D6E8]">
+                      Remaining Coin Balance
+                    </p>
+                    <p className="mt-0.5 font-mono tabular-nums text-2xl font-extrabold text-[#51D6E8]">
+                      {winningTeam ? `${currCoins} coins` : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#B9F36B]">
+                      Current Points Balance
+                    </p>
+                    <p className="mt-0.5 font-mono tabular-nums text-2xl font-extrabold text-[#B9F36B]">
+                      {winningTeam ? `${currPts} pts` : '—'}
+                    </p>
+                  </div>
+                </div>
+
                 {answerTimerExpired && (
                   <div
                     role="alert"
@@ -352,8 +416,7 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
                   >
                     <AlertTriangle className="h-5 w-5 shrink-0" />
                     <span>
-                      Answer time is over. Listen to the final response and manually record
-                      Correct, Wrong, or Skip below.
+                      Answer time is over. Evaluate the winning team&apos;s verbal response below.
                     </span>
                   </div>
                 )}
@@ -363,32 +426,42 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
                     type="button"
                     disabled={busy}
                     onClick={() => runAction(() => evaluateAnswerTransaction(room.id, 'CORRECT'))}
-                    className="min-h-[60px] flex flex-col items-center justify-center rounded-xl bg-[#B9F36B] px-5 py-2.5 text-[#08111F] hover:bg-[#c8f68a] transition-colors disabled:opacity-50"
+                    className="min-h-[82px] flex flex-col items-center justify-center rounded-xl bg-[#B9F36B] px-5 py-3 text-[#08111F] hover:bg-[#c8f68a] transition-colors disabled:opacity-50"
                   >
                     <span className="inline-flex items-center gap-2 text-base font-extrabold">
                       <Check className="h-5 w-5" />
                       CORRECT ANSWER
                     </span>
-                    <span className="font-mono text-xs font-bold">
+                    <span className="mt-0.5 font-mono text-xs font-bold">
                       +{room.settings.correctCoinReward} Coins · +
                       {room.settings.correctPointReward} Points
                     </span>
+                    {winningTeam && (
+                      <span className="mt-1 font-mono text-[11px] font-semibold text-[#08111F]/80">
+                        Coins: {currCoins} → {correctNewCoins} | Pts: {currPts} → {correctNewPts}
+                      </span>
+                    )}
                   </button>
 
                   <button
                     type="button"
                     disabled={busy}
                     onClick={() => runAction(() => evaluateAnswerTransaction(room.id, 'WRONG'))}
-                    className="min-h-[60px] flex flex-col items-center justify-center rounded-xl bg-[#F05252] px-5 py-2.5 text-white hover:bg-[#e13f3f] transition-colors disabled:opacity-50"
+                    className="min-h-[82px] flex flex-col items-center justify-center rounded-xl bg-[#F05252] px-5 py-3 text-white hover:bg-[#e13f3f] transition-colors disabled:opacity-50"
                   >
                     <span className="inline-flex items-center gap-2 text-base font-extrabold">
                       <X className="h-5 w-5" />
                       WRONG ANSWER
                     </span>
-                    <span className="font-mono text-xs font-bold">
+                    <span className="mt-0.5 font-mono text-xs font-bold">
                       -{room.settings.wrongCoinPenalty} Coins · -{room.settings.wrongPointPenalty}{' '}
                       Points
                     </span>
+                    {winningTeam && (
+                      <span className="mt-1 font-mono text-[11px] font-semibold text-white/90">
+                        Coins: {currCoins} → {wrongNewCoins} | Pts: {currPts} → {wrongNewPts}
+                      </span>
+                    )}
                   </button>
                 </div>
 
@@ -420,29 +493,54 @@ export function LiveAuctionSection({ snapshot, onShowResults }: LiveAuctionSecti
 
             {/* Post-Evaluation Next Item Panel */}
             {room.machineState === 'ANSWER_EVALUATED' && (
-              <div className="rounded-2xl border border-[#51D6E8]/40 bg-[#111E31] p-6 flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs font-semibold text-[#51D6E8]">Evaluation Recorded</p>
-                  <p className="mt-1 text-base font-bold text-[#EEF5FF]">
-                    {snapshot.lastAnnouncement}
-                  </p>
-                  {currentAnswerSession?.responseTimeMs !== null &&
-                    currentAnswerSession?.responseTimeMs !== undefined && (
-                      <p className="text-xs font-mono text-[#9BB0CA]">
-                        Response Time: {formatResponseTime(currentAnswerSession.responseTimeMs)}
-                      </p>
-                    )}
+              <div className="rounded-2xl border border-[#51D6E8]/40 bg-[#111E31] p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-semibold text-[#51D6E8]">
+                      Evaluation Recorded · Item #{displayItemNumber}
+                    </p>
+                    <p className="mt-1 text-base font-bold text-[#EEF5FF]">
+                      {snapshot.lastAnnouncement}
+                    </p>
+                    {currentAnswerSession?.responseTimeMs !== null &&
+                      currentAnswerSession?.responseTimeMs !== undefined && (
+                        <p className="text-xs font-mono text-[#9BB0CA]">
+                          Response Time: {formatResponseTime(currentAnswerSession.responseTimeMs)}
+                        </p>
+                      )}
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => runAction(() => advanceToNextItem(room.id))}
+                    className="min-h-[48px] inline-flex items-center gap-2 rounded-xl bg-[#51D6E8] px-6 text-sm font-bold text-[#08111F] hover:bg-[#6de0ef]"
+                  >
+                    {room.unusedItemCount > 0 ? 'Next Item' : 'Finish Event & Final Results'}
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => runAction(() => advanceToNextItem(room.id))}
-                  className="min-h-[48px] inline-flex items-center gap-2 rounded-xl bg-[#51D6E8] px-6 text-sm font-bold text-[#08111F] hover:bg-[#6de0ef]"
-                >
-                  {room.unusedItemCount > 0 ? 'Next Question' : 'Finish Event & Final Results'}
-                  <ArrowRight className="h-4 w-4" />
-                </button>
+                {winningTeam && (
+                  <div className="grid grid-cols-2 gap-3 rounded-xl border border-[#223552] bg-[#08111F] p-3.5">
+                    <div>
+                      <p className="text-[11px] text-[#9BB0CA]">
+                        {winningTeam.teamName} · Updated Coins
+                      </p>
+                      <p className="font-mono tabular-nums text-lg font-extrabold text-[#51D6E8]">
+                        {winningTeam.coinBalance} coins
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] text-[#9BB0CA]">
+                        {winningTeam.teamName} · Updated Points
+                      </p>
+                      <p className="font-mono tabular-nums text-lg font-extrabold text-[#B9F36B]">
+                        {winningTeam.points} pts
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -90,7 +90,7 @@ service cloud.firestore {
         && data.questionTitle is string && data.questionTitle.size() >= 1 && data.questionTitle.size() <= 300
         && data.questionDescription is string && data.questionDescription.size() <= 2000
         && data.category is string && data.category.size() >= 1 && data.category.size() <= 80
-        && data.imageOrEmoji is string && data.imageOrEmoji.size() >= 1 && data.imageOrEmoji.size() <= 200
+        && data.imageOrEmoji is string && data.imageOrEmoji.size() >= 1 && data.imageOrEmoji.size() <= 250000
         && isValidDifficulty(data.difficulty)
         && data.startingBid is int && data.startingBid >= 1 && data.startingBid <= 100000
         && (!('auctionDurationOverride' in data) || data.auctionDurationOverride == null || (data.auctionDurationOverride is int && data.auctionDurationOverride >= 5 && data.auctionDurationOverride <= 600))
@@ -321,7 +321,7 @@ service cloud.firestore {
         && data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 5000
         && data.itemName is string && data.itemName.size() >= 1 && data.itemName.size() <= 120
         && data.category is string && data.category.size() >= 1 && data.category.size() <= 80
-        && data.imageOrEmoji is string && data.imageOrEmoji.size() >= 1 && data.imageOrEmoji.size() <= 200
+        && data.imageOrEmoji is string && data.imageOrEmoji.size() >= 1 && data.imageOrEmoji.size() <= 250000
         && isValidDifficulty(data.difficulty)
         && data.startingBid is int && data.startingBid >= 1 && data.startingBid <= 100000
         && (!('auctionDurationOverride' in data) || data.auctionDurationOverride == null || (data.auctionDurationOverride is int && data.auctionDurationOverride >= 5 && data.auctionDurationOverride <= 600))

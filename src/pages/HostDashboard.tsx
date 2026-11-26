@@ -56,6 +56,7 @@ import {
 import { buildRoomJoinLink, resolveShareBaseUrl } from '../lib/shareUrl.ts';
 import {
   formatResponseTime,
+  isRenderableImageSrc,
   type HostRoomSnapshot,
   type HostUser,
   type QuestionBankItem,
@@ -91,7 +92,7 @@ const HOST_NAV_ITEMS: Array<{ id: HostSection; label: string; icon: typeof Layou
   { id: 'create-room', label: 'Create Room', icon: Plus },
   { id: 'my-rooms', label: 'My Rooms', icon: Layers },
   { id: 'items', label: 'Auction Items', icon: BookMarked },
-  { id: 'question-bank', label: 'Question Bank', icon: BookMarked },
+  { id: 'question-bank', label: 'Item Catalog', icon: BookMarked },
   { id: 'live-auction', label: 'Auction Controls', icon: Gavel },
   { id: 'teams', label: 'Team Management', icon: Users },
   { id: 'live-bids', label: 'Live Bids', icon: Activity },
@@ -631,7 +632,7 @@ export function HostDashboard({
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#223552] pb-4">
                 <div>
                   <h2 className="font-display text-xl font-bold text-[#EEF5FF]">
-                    Reusable Question Bank ({questionBank.length})
+                    Reusable Item Catalog ({questionBank.length})
                   </h2>
                   <p className="text-xs text-[#9BB0CA]">
                     Items saved across rooms. Select items to import into{' '}
@@ -653,16 +654,17 @@ export function HostDashboard({
 
               {questionBank.length === 0 ? (
                 <p className="py-8 text-center text-sm text-[#9BB0CA]">
-                  Your Question Bank is empty. Check &quot;Also save to my reusable Question
-                  Bank&quot; when creating custom auction items.
+                  Your Item Catalog is empty. Check &quot;Also save item to my reusable catalog&quot;
+                  when adding auction items.
                 </p>
               ) : (
                 <div className="divide-y divide-[#223552]">
                   {questionBank.map((b) => {
                     const checked = selectedBankIds.includes(b.id);
+                    const isImg = isRenderableImageSrc(b.imageOrEmoji);
                     return (
                       <div key={b.id} className="py-3.5 flex items-center justify-between gap-3">
-                        <label className="flex items-start gap-3 cursor-pointer min-w-0 flex-1">
+                        <label className="flex items-center gap-3 cursor-pointer min-w-0 flex-1">
                           <input
                             type="checkbox"
                             checked={checked}
@@ -671,13 +673,22 @@ export function HostDashboard({
                                 e.target.checked ? [...prev, b.id] : prev.filter((x) => x !== b.id),
                               )
                             }
-                            className="mt-1 h-4 w-4 accent-[#51D6E8]"
+                            className="h-4 w-4 accent-[#51D6E8]"
                           />
+                          <div className="h-11 w-14 shrink-0 rounded-xl border border-[#223552] bg-[#08111F] overflow-hidden flex items-center justify-center">
+                            {isImg ? (
+                              <img
+                                src={b.imageOrEmoji}
+                                alt={b.itemName}
+                                referrerPolicy="no-referrer"
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <span className="text-xl">{b.imageOrEmoji || '💻'}</span>
+                            )}
+                          </div>
                           <div className="min-w-0">
-                            <p className="font-semibold text-[#EEF5FF] truncate">
-                              {b.imageOrEmoji} {b.itemName}
-                            </p>
-                            <p className="text-xs text-[#9BB0CA] truncate">{b.questionTitle}</p>
+                            <p className="font-semibold text-[#EEF5FF] truncate">{b.itemName}</p>
                             <p className="text-[11px] text-[#9BB0CA]">
                               {b.category} · Start {b.startingBid} coins
                             </p>
@@ -688,7 +699,7 @@ export function HostDashboard({
                           type="button"
                           onClick={() => handleDeleteBankItem(b.id)}
                           className="rounded-lg p-2 text-[#9BB0CA] hover:bg-[#F05252]/15 hover:text-[#F05252]"
-                          title="Delete from bank"
+                          title="Delete from catalog"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -712,7 +723,7 @@ export function HostDashboard({
                 </h2>
                 <p className="text-sm text-[#9BB0CA] max-w-md mx-auto">
                   You don&apos;t have an auction room yet. Create a room to generate a join code,
-                  add custom tech questions, and run live bidding.
+                  add auction items with photographs, and run live bidding.
                 </p>
                 <button
                   type="button"

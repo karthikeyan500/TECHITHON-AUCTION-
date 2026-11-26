@@ -16,8 +16,10 @@ import {
 } from 'firebase/firestore';
 import {
   computeRankedLeaderboard,
+  computeTeamEconomyStats,
   DEFAULT_ROOM_SETTINGS,
   getHumanRoomStatus,
+  isRenderableImageSrc,
   type AnswerDecision,
   type AnswerSession,
   type AuctionHistoryEntry,
@@ -233,6 +235,24 @@ function normalizeSettings(raw: Partial<RoomSettings> | undefined): RoomSettings
     deductWinningBid: raw?.deductWinningBid ?? DEFAULT_ROOM_SETTINGS.deductWinningBid,
     allowNegativePoints: raw?.allowNegativePoints ?? DEFAULT_ROOM_SETTINGS.allowNegativePoints,
   };
+}
+
+function sanitizeImageOrEmoji(raw: string | null | undefined): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return '💻';
+  if (trimmed.startsWith('data:')) {
+    if (isRenderableImageSrc(trimmed) && trimmed.length <= 250_000) {
+      return trimmed;
+    }
+    throw new RoomActionError(
+      'VALIDATION',
+      'Uploaded image must be a JPG, PNG, WebP, or GIF under 200 KB.',
+    );
+  }
+  if (trimmed.startsWith('https://') || trimmed.startsWith('http://') || trimmed.startsWith('/')) {
+    return trimmed.slice(0, 2000);
+  }
+  return trimmed.slice(0, 32) || '💻';
 }
 
 function mapRoomDoc(data: Record<string, unknown>, activeTeamCount?: number, items?: AuctionItem[]): RoomSummary {
@@ -512,10 +532,17 @@ export async function deleteQuestionBankItem(hostId: string, bankId: string): Pr
   }
 }
 
+export interface CreateRoomItemInput {
+  itemName: string;
+  imageOrEmoji: string;
+  startingBid?: number;
+}
+
 export interface CreateRoomInput {
   roomName: string;
   roomPin?: string;
   settings: RoomSettings;
+  initialItems?: CreateRoomItemInput[];
 }
 
 export async function createRoom(input: CreateRoomInput): Promise<HostRoomSnapshot> {
@@ -529,6 +556,35 @@ export async function createRoom(input: CreateRoomInput): Promise<HostRoomSnapsh
   const cleanPin = (input.roomPin || '').trim();
   const hasPin = cleanPin.length > 0;
   const roomId = newId('room');
+
+  const preparedItems: AuctionItem[] = [];
+  for (let i = 0; i < (input.initialItems || []).length; i++) {
+    const rawItem = input.initialItems![i];
+    const itemName = (rawItem.itemName || '').trim().slice(0, 120);
+    if (!itemName) continue;
+    const itemId = newId('item');
+    const imageOrEmoji = sanitizeImageOrEmoji(rawItem.imageOrEmoji);
+    const startingBid = Math.max(
+      1,
+      Math.trunc(Number(rawItem.startingBid ?? settings.minStartingBid)),
+    );
+    preparedItems.push({
+      id: itemId,
+      roomId,
+      sortOrder: preparedItems.length,
+      itemName,
+      questionTitle: itemName,
+      questionDescription: '',
+      category: 'Tech Auction',
+      imageOrEmoji,
+      difficulty: '',
+      startingBid,
+      auctionDurationOverride: null,
+      answerDurationOverride: null,
+      status: 'PENDING',
+      createdAt: Date.now(),
+    });
+  }
 
   // Generate collision-free room code
   let roomCode = randomRoomCode();
@@ -558,8 +614,8 @@ export async function createRoom(input: CreateRoomInput): Promise<HostRoomSnapsh
     currentAuctionId: null,
     currentAnswerSessionId: null,
     teamCount: 0,
-    itemCount: 0,
-    unusedItemCount: 0,
+    itemCount: preparedItems.length,
+    unusedItemCount: preparedItems.length,
     lastAnnouncement: announcement,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -583,6 +639,31 @@ export async function createRoom(input: CreateRoomInput): Promise<HostRoomSnapsh
       roomId,
       hostId: host.id,
       pinHash,
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  for (const item of preparedItems) {
+    batch.set(doc(db, 'rooms', roomId, 'items', item.id), {
+      id: item.id,
+      roomId,
+      sortOrder: item.sortOrder,
+      itemName: item.itemName,
+      category: item.category,
+      imageOrEmoji: item.imageOrEmoji,
+      difficulty: item.difficulty,
+      startingBid: item.startingBid,
+      auctionDurationOverride: null,
+      answerDurationOverride: null,
+      status: 'PENDING',
+      createdAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'rooms', roomId, 'host_prompts', item.id), {
+      id: item.id,
+      roomId,
+      hostId: host.id,
+      questionTitle: item.itemName,
+      questionDescription: '',
       updatedAt: serverTimestamp(),
     });
   }
@@ -611,22 +692,37 @@ export async function createRoom(input: CreateRoomInput): Promise<HostRoomSnapsh
     currentAuctionId: null,
     currentAnswerSessionId: null,
     teamCount: 0,
-    itemCount: 0,
-    unusedItemCount: 0,
+    itemCount: preparedItems.length,
+    unusedItemCount: preparedItems.length,
     createdAt: Date.now(),
   };
+
+  const firstItem = preparedItems[0] ?? null;
 
   return {
     serverTime: Date.now(),
     room: roomSummary,
-    currentItem: null,
+    currentItem: firstItem
+      ? {
+          id: firstItem.id,
+          sortOrder: firstItem.sortOrder,
+          itemName: firstItem.itemName,
+          category: firstItem.category,
+          imageOrEmoji: firstItem.imageOrEmoji,
+          difficulty: firstItem.difficulty,
+          startingBid: firstItem.startingBid,
+          auctionDurationOverride: null,
+          answerDurationOverride: null,
+          status: 'PENDING',
+        }
+      : null,
     currentAuction: null,
     currentAnswerSession: null,
     recentBids: [],
     leaderboard: [],
     lastAnnouncement: announcement,
-    items: [],
-    currentHostItem: null,
+    items: preparedItems,
+    currentHostItem: firstItem,
     teams: [],
     allAuctionBids: [],
     transactions: [],
@@ -1068,15 +1164,17 @@ function buildTeamSnapshotFromDocs(
   if (!selfTeam || selfTeam.participationStatus !== 'ACTIVE') {
     throw new RoomActionError('PERMISSION_DENIED', 'Team is no longer active in this room.');
   }
-  const recentTransactions = transactions
-    .filter((tx) => tx.teamId === teamId)
+  const teamTransactions = transactions.filter((tx) => tx.teamId === teamId);
+  const recentTransactions = [...teamTransactions]
     .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, 25);
+    .slice(0, 100);
+  const teamStats = computeTeamEconomyStats(teamTransactions, teamId);
 
   return {
     ...pub,
     selfTeam,
     recentTransactions,
+    teamStats,
   };
 }
 
@@ -1601,24 +1699,25 @@ export async function addCustomItem(
   roomId: string,
   payload: {
     itemName: string;
-    questionTitle: string;
-    questionDescription: string;
-    category: string;
+    questionTitle?: string;
+    questionDescription?: string;
+    category?: string;
     imageOrEmoji: string;
-    difficulty: DifficultyLevel | '';
+    difficulty?: DifficultyLevel | '';
     startingBid: number;
-    auctionDurationOverride: number | null;
-    answerDurationOverride: number | null;
+    auctionDurationOverride?: number | null;
+    answerDurationOverride?: number | null;
     saveToBank?: boolean;
   },
 ): Promise<void> {
   const host = requireHostAuth();
   const itemName = payload.itemName.trim().slice(0, 120);
-  const questionTitle = payload.questionTitle.trim().slice(0, 300);
-  const questionDescription = payload.questionDescription.trim().slice(0, 2000);
-  if (!itemName || !questionTitle) {
-    throw new RoomActionError('VALIDATION', 'Item name and question title are required.');
+  if (!itemName) {
+    throw new RoomActionError('VALIDATION', 'Item name is required.');
   }
+  const questionTitle = (payload.questionTitle || itemName).trim().slice(0, 300) || itemName;
+  const questionDescription = (payload.questionDescription || '').trim().slice(0, 2000);
+  const safeImageOrEmoji = sanitizeImageOrEmoji(payload.imageOrEmoji);
 
   const itemsSnap = await getDocs(
     query(collection(db, 'rooms', roomId, 'items'), where('roomId', '==', roomId)),
@@ -1635,8 +1734,8 @@ export async function addCustomItem(
     roomId,
     sortOrder: nextOrder,
     itemName,
-    category: (payload.category || 'General Tech').trim().slice(0, 80),
-    imageOrEmoji: (payload.imageOrEmoji || '💻').trim().slice(0, 200),
+    category: (payload.category || 'Tech Auction').trim().slice(0, 80),
+    imageOrEmoji: safeImageOrEmoji,
     difficulty: payload.difficulty || '',
     startingBid: Math.max(1, Math.trunc(Number(payload.startingBid || 10))),
     auctionDurationOverride: payload.auctionDurationOverride
@@ -1674,8 +1773,8 @@ export async function addCustomItem(
       itemName,
       questionTitle,
       questionDescription,
-      category: (payload.category || 'General Tech').trim().slice(0, 80),
-      imageOrEmoji: (payload.imageOrEmoji || '💻').trim().slice(0, 200),
+      category: (payload.category || 'Tech Auction').trim().slice(0, 80),
+      imageOrEmoji: safeImageOrEmoji,
       difficulty: payload.difficulty || '',
       startingBid: Math.max(1, Math.trunc(Number(payload.startingBid || 10))),
       auctionDurationOverride: payload.auctionDurationOverride ?? null,
@@ -1696,28 +1795,29 @@ export async function updateCustomItem(
   itemId: string,
   payload: {
     itemName: string;
-    questionTitle: string;
-    questionDescription: string;
-    category: string;
+    questionTitle?: string;
+    questionDescription?: string;
+    category?: string;
     imageOrEmoji: string;
-    difficulty: DifficultyLevel | '';
+    difficulty?: DifficultyLevel | '';
     startingBid: number;
-    auctionDurationOverride: number | null;
-    answerDurationOverride: number | null;
+    auctionDurationOverride?: number | null;
+    answerDurationOverride?: number | null;
   },
 ): Promise<void> {
   const host = requireHostAuth();
   const itemName = payload.itemName.trim().slice(0, 120);
-  const questionTitle = payload.questionTitle.trim().slice(0, 300);
-  if (!itemName || !questionTitle) {
-    throw new RoomActionError('VALIDATION', 'Item name and question title are required.');
+  if (!itemName) {
+    throw new RoomActionError('VALIDATION', 'Item name is required.');
   }
+  const questionTitle = (payload.questionTitle || itemName).trim().slice(0, 300) || itemName;
+  const safeImageOrEmoji = sanitizeImageOrEmoji(payload.imageOrEmoji);
 
   const batch = writeBatch(db);
   batch.update(doc(db, 'rooms', roomId, 'items', itemId), {
     itemName,
-    category: (payload.category || 'General Tech').trim().slice(0, 80),
-    imageOrEmoji: (payload.imageOrEmoji || '💻').trim().slice(0, 200),
+    category: (payload.category || 'Tech Auction').trim().slice(0, 80),
+    imageOrEmoji: safeImageOrEmoji,
     difficulty: payload.difficulty || '',
     startingBid: Math.max(1, Math.trunc(Number(payload.startingBid || 10))),
     auctionDurationOverride: payload.auctionDurationOverride
@@ -1733,7 +1833,7 @@ export async function updateCustomItem(
     roomId,
     hostId: host.id,
     questionTitle,
-    questionDescription: payload.questionDescription.trim().slice(0, 2000),
+    questionDescription: (payload.questionDescription || '').trim().slice(0, 2000),
     updatedAt: serverTimestamp(),
   });
 
@@ -1878,10 +1978,10 @@ export async function importItemsFromCsv(
   const idxDiff = findCol(['difficulty', 'level']);
   const idxBid = findCol(['startingbid', 'minbid', 'bid']);
 
-  if (idxName === -1 || idxTitle === -1) {
+  if (idxName === -1) {
     throw new RoomActionError(
       'VALIDATION',
-      'CSV header must include itemName and questionTitle columns.',
+      'CSV header must include an itemName column.',
     );
   }
 
@@ -1898,8 +1998,9 @@ export async function importItemsFromCsv(
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     const itemName = (r[idxName] || '').trim().slice(0, 120);
-    const questionTitle = (r[idxTitle] || '').trim().slice(0, 300);
-    if (!itemName || !questionTitle) continue;
+    if (!itemName) continue;
+    const questionTitle =
+      idxTitle >= 0 && r[idxTitle] ? r[idxTitle].trim().slice(0, 300) : itemName;
 
     const itemId = newId('item');
     const rawDiff = idxDiff >= 0 ? (r[idxDiff] || '').trim() : '';
@@ -1909,14 +2010,15 @@ export async function importItemsFromCsv(
     const parsedBid =
       idxBid >= 0 ? Math.trunc(Number(r[idxBid])) : defaultStartingBid;
     const startingBid = Number.isFinite(parsedBid) && parsedBid > 0 ? parsedBid : 10;
+    const safeImage = sanitizeImageOrEmoji(idxEmoji >= 0 ? r[idxEmoji] : '💻');
 
     batch.set(doc(db, 'rooms', roomId, 'items', itemId), {
       id: itemId,
       roomId,
       sortOrder: nextOrder++,
       itemName,
-      category: (idxCat >= 0 && r[idxCat] ? r[idxCat].trim() : 'General Tech').slice(0, 80),
-      imageOrEmoji: (idxEmoji >= 0 && r[idxEmoji] ? r[idxEmoji].trim() : '💻').slice(0, 200),
+      category: (idxCat >= 0 && r[idxCat] ? r[idxCat].trim() : 'Tech Auction').slice(0, 80),
+      imageOrEmoji: safeImage,
       difficulty,
       startingBid,
       auctionDurationOverride: null,
@@ -1977,7 +2079,7 @@ export async function addItemsFromQuestionBank(
       sortOrder: nextOrder++,
       itemName: b.itemName.slice(0, 120),
       category: b.category.slice(0, 80),
-      imageOrEmoji: b.imageOrEmoji.slice(0, 200),
+      imageOrEmoji: sanitizeImageOrEmoji(b.imageOrEmoji),
       difficulty: b.difficulty,
       startingBid: Math.max(1, Math.trunc(b.startingBid)),
       auctionDurationOverride: b.auctionDurationOverride,
@@ -2032,12 +2134,6 @@ export async function updateRoomSettings(
   const roomSnap = await getDoc(doc(db, 'rooms', roomId));
   if (!roomSnap.exists()) throw new RoomActionError('NOT_FOUND', 'Room not found.');
   const room = mapRoomDoc(roomSnap.data());
-  if (['AUCTION_OPEN', 'ANSWER_RUNNING'].includes(room.machineState)) {
-    throw new RoomActionError(
-      'VALIDATION',
-      'Pause or finish the active timer before modifying room settings.',
-    );
-  }
 
   let hasPin = room.hasPin;
   const batch = writeBatch(db);
@@ -3305,17 +3401,14 @@ export function exportHistoryCsv(snapshot: HostRoomSnapshot): void {
 
 export function exportItemsCsv(snapshot: HostRoomSnapshot): void {
   const lines = [
-    'itemName,questionTitle,questionDescription,category,imageOrEmoji,difficulty,startingBid,auctionDurationOverride,answerDurationOverride',
+    'itemName,category,imageOrEmoji,startingBid,auctionDurationOverride,answerDurationOverride',
   ];
   for (const item of snapshot.items) {
     lines.push(
       [
         escapeCsvCell(item.itemName),
-        escapeCsvCell(item.questionTitle),
-        escapeCsvCell(item.questionDescription),
         escapeCsvCell(item.category),
         escapeCsvCell(item.imageOrEmoji),
-        escapeCsvCell(item.difficulty),
         escapeCsvCell(item.startingBid),
         escapeCsvCell(item.auctionDurationOverride ?? ''),
         escapeCsvCell(item.answerDurationOverride ?? ''),

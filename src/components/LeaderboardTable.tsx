@@ -30,9 +30,9 @@ export function LeaderboardTable({
         <thead>
           <tr className="border-b border-[#223552] text-xs font-semibold text-[#9BB0CA]">
             <th className="py-3 pl-4 pr-3">Rank</th>
-            <th className="py-3 px-3">Team</th>
-            <th className="py-3 px-3 text-right">Points</th>
-            <th className="py-3 px-3 text-right">Coins</th>
+            <th className="py-3 px-3">Team Name</th>
+            <th className="py-3 px-3 text-right text-[#B9F36B]">Competition Points</th>
+            <th className="py-3 px-3 text-right">Virtual Coins</th>
             {!compact && (
               <>
                 <th className="py-3 px-3 text-right">Correct</th>
@@ -85,10 +85,10 @@ export function LeaderboardTable({
                     )}
                   </div>
                 </td>
-                <td className="py-3 px-3 text-right font-mono tabular-nums font-bold text-[#B9F36B]">
+                <td className="py-3 px-3 text-right font-mono tabular-nums text-base font-extrabold text-[#B9F36B]">
                   {entry.points}
                 </td>
-                <td className="py-3 px-3 text-right font-mono tabular-nums font-semibold text-[#51D6E8]">
+                <td className="py-3 px-3 text-right font-mono tabular-nums text-xs font-medium text-[#51D6E8]/85">
                   {entry.coinBalance}
                 </td>
                 {!compact && (

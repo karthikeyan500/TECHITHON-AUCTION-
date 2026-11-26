@@ -76,7 +76,7 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   minStartingBid: 10,
   minBidIncrement: 5,
   deductWinningBid: true,
-  allowNegativePoints: false,
+  allowNegativePoints: true,
 };
 
 export interface RoomSummary {
@@ -289,9 +289,18 @@ export interface HostRoomSnapshot extends PublicRoomSnapshot {
   history: AuctionHistoryEntry[];
 }
 
+export interface TeamEconomyStats {
+  coinsSpentOnBids: number;
+  coinsEarnedCorrect: number;
+  coinsLostWrong: number;
+  pointsEarnedCorrect: number;
+  pointsLostWrong: number;
+}
+
 export interface TeamRoomSnapshot extends PublicRoomSnapshot {
   selfTeam: Team;
   recentTransactions: EconomyTransaction[];
+  teamStats: TeamEconomyStats;
 }
 
 export function getHumanRoomStatus(
@@ -370,4 +379,58 @@ export function formatResponseTime(ms: number | null | undefined): string {
   if (ms === 0) return '0.000s';
   const seconds = ms / 1000;
   return `${seconds.toFixed(3)}s`;
+}
+
+export function isRenderableImageSrc(val: string | null | undefined): boolean {
+  if (!val) return false;
+  const trimmed = val.trim();
+  if (
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('/')
+  ) {
+    return true;
+  }
+  return /^data:image\/(jpeg|jpg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(trimmed);
+}
+
+export function computeTeamEconomyStats(
+  transactions: EconomyTransaction[],
+  teamId: string,
+): TeamEconomyStats {
+  let rawBidDeductions = 0;
+  let refunds = 0;
+  let coinsEarnedCorrect = 0;
+  let coinsLostWrong = 0;
+  let pointsEarnedCorrect = 0;
+  let pointsLostWrong = 0;
+
+  for (const tx of transactions) {
+    if (tx.teamId !== teamId) continue;
+    if (tx.currencyType === 'COINS') {
+      if (tx.transactionType === 'BID_DEDUCTION') {
+        rawBidDeductions += Math.abs(tx.actualChange);
+      } else if (tx.transactionType === 'REFUND' && tx.actualChange > 0) {
+        refunds += tx.actualChange;
+      } else if (tx.transactionType === 'CORRECT_REWARD' && tx.actualChange > 0) {
+        coinsEarnedCorrect += tx.actualChange;
+      } else if (tx.transactionType === 'WRONG_PENALTY' && tx.actualChange < 0) {
+        coinsLostWrong += Math.abs(tx.actualChange);
+      }
+    } else if (tx.currencyType === 'POINTS') {
+      if (tx.transactionType === 'CORRECT_REWARD' && tx.actualChange > 0) {
+        pointsEarnedCorrect += tx.actualChange;
+      } else if (tx.transactionType === 'WRONG_PENALTY' && tx.actualChange < 0) {
+        pointsLostWrong += Math.abs(tx.actualChange);
+      }
+    }
+  }
+
+  return {
+    coinsSpentOnBids: Math.max(0, rawBidDeductions - refunds),
+    coinsEarnedCorrect,
+    coinsLostWrong,
+    pointsEarnedCorrect,
+    pointsLostWrong,
+  };
 }
